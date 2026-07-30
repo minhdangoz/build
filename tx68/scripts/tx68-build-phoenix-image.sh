@@ -76,7 +76,7 @@ if [[ -e "${OUTPUT_IMAGE}" || -e "${OUTPUT_IMAGE}.sha256" ]]; then
 	exit 1
 fi
 
-required_commands=(busybox cmp dd debugfs dpkg-deb e2fsck jq mkimage openssl sfdisk sha256sum strings)
+required_commands=(busybox cmp dd debugfs dpkg-deb e2fsck jq mkimage openssl sfdisk sha256sum strings xxd)
 for command_name in "${required_commands[@]}"; do
 	command -v "${command_name}" >/dev/null ||
 		{ echo "ERROR: missing host command: ${command_name}" >&2; exit 1; }
@@ -290,6 +290,41 @@ if debugfs -R "stat /boot/Image" "${rootfs_raw}" 2>/dev/null | grep -q "Inode:";
 	debugfs -w -R "rm /boot/uImage" "${rootfs_raw}" >/dev/null 2>&1 || true
 	debugfs -w -R "write ${wrapped_kernel} /boot/uImage" "${rootfs_raw}" >/dev/null
 	rm -f "${raw_kernel}" "${wrapped_kernel}"
+
+	# armbian-build's own postinst already wraps /boot/initrd.img-<release>
+	# into /boot/uInitrd via mkimage -- but with the standard mainline tag
+	# (-A arm64, matching the kernel's own arch), which hits the exact same
+	# image_check_target_arch() rejection as the kernel did, just for the
+	# ramdisk this time: confirmed on real hardware, "No Linux ARM Ramdisk
+	# Image / Ramdisk image is corrupt or invalid" right after the kernel
+	# itself booted successfully with the arm-tagged uImage above. Re-wrap
+	# the same raw initrd with -A arm for the same reason as the kernel.
+	echo "Re-wrapping /boot/uInitrd with -A arm (same IH_ARCH_DEFAULT gate as the kernel)"
+	raw_initrd="${work_dir}/initrd.img"
+	wrapped_initrd="${work_dir}/uInitrd"
+	initrd_target="$(debugfs -R "stat /boot/initrd.img" "${rootfs_raw}" 2>/dev/null |
+		sed -n 's/^Fast link dest: "\(.*\)"$/\1/p')"
+	initrd_path="/boot/initrd.img"
+	[[ -n "${initrd_target}" ]] && initrd_path="/boot/${initrd_target}"
+	debugfs -R "dump ${initrd_path} ${raw_initrd}" "${rootfs_raw}" >/dev/null
+	[[ -s "${raw_initrd}" ]] ||
+		{ echo "ERROR: failed to extract ${initrd_path} from rootfs" >&2; exit 1; }
+	# Debian/Ubuntu's update-initramfs defaults to gzip; detect it from the
+	# magic bytes rather than assuming, so a future compression setting
+	# change doesn't silently produce a bad ramdisk tag.
+	initrd_magic="$(dd if="${raw_initrd}" bs=1 count=2 status=none | xxd -p)"
+	case "${initrd_magic}" in
+		1f8b) initrd_comp=gzip ;;
+		28b5) initrd_comp=zstd ;;
+		fd37) initrd_comp=lzma ;;
+		*) echo "ERROR: unrecognized initrd compression magic 0x${initrd_magic}" >&2; exit 1 ;;
+	esac
+	mkimage -A arm -O linux -T ramdisk -C "${initrd_comp}" \
+		-a 0 -e 0 -n uInitrd \
+		-d "${raw_initrd}" "${wrapped_initrd}" >/dev/null
+	debugfs -w -R "rm /boot/uInitrd" "${rootfs_raw}" >/dev/null 2>&1 || true
+	debugfs -w -R "write ${wrapped_initrd} /boot/uInitrd" "${rootfs_raw}" >/dev/null
+	rm -f "${raw_initrd}" "${wrapped_initrd}"
 fi
 
 echo "Installing current TX68 boot script into extracted rootfs"
