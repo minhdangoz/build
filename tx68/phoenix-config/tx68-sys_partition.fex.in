@@ -1,0 +1,14 @@
+; TX68 Ubuntu eMMC layout for PhoenixSuit.
+; Partition sizes are in 512-byte sectors.
+
+[mbr]
+size = 16384
+
+[partition_start]
+
+[partition]
+    name         = rootfs
+    size         = @ROOTFS_SECTORS@
+    downloadfile = "rootfs.fex"
+    user_type    = 0x8000
+    verify       = 1

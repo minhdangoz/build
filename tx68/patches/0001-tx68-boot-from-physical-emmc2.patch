@@ -1,0 +1,56 @@
+From 4d72613f8c240288aa98859e4968f02d55eadc72 Mon Sep 17 00:00:00 2001
+From: TX68 Build <tx68@local>
+Date: Wed, 29 Jul 2026 15:00:00 +0700
+Subject: [PATCH] tx68: boot from the physical SDC2 eMMC device
+
+The H618 vendor MMC implementation keeps the controller number as the
+block-device number: sunxi_mmc_init(2) sets cfg->host_no to 2 and
+mmc_create() copies that value to bdesc->devnum. TX68 boots from SDC2, so
+the registered eMMC device is mmc2, not mmc0.
+
+The tree also does not define CONFIG_MMC_SUNXI_SLOT_EXTRA for this
+configuration. Treating the undefined symbol as zero selected mmc_auto,
+whose command depends on an unset mmc_bootdev variable. Select the actual
+registered mmc2 device directly and keep the optional FAT environment on
+that device.
+---
+ configs/orangepi_zero3_defconfig | 1 +
+ include/configs/sunxi-common.h   | 4 ++--
+ 2 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/configs/orangepi_zero3_defconfig b/configs/orangepi_zero3_defconfig
+index 040f2852..ad6c855d 100644
+--- a/configs/orangepi_zero3_defconfig
++++ b/configs/orangepi_zero3_defconfig
+@@ -22,6 +22,7 @@ CONFIG_ENV_VARS_UBOOT_CONFIG=y
+ CONFIG_EXT4_WRITE=y
+ CONFIG_CMD_EXT4_WRITE=y
+ CONFIG_ENV_IS_IN_FAT=y
++CONFIG_ENV_FAT_DEVICE_AND_PART="2:auto"
+ 
+ #I2C
+ CONFIG_SYS_I2C_SUNXI=y
+diff --git a/include/configs/sunxi-common.h b/include/configs/sunxi-common.h
+index 8e172e4a..0f904f5e 100644
+--- a/include/configs/sunxi-common.h
++++ b/include/configs/sunxi-common.h
+@@ -342,7 +342,7 @@
+ 	"ramdisk ram " RAMDISK_ADDR_R " 0x4000000\0"
+ 
+ #ifdef CONFIG_MMC
+-#if CONFIG_MMC_SUNXI_SLOT_EXTRA != -1
++#if defined(CONFIG_MMC_SUNXI_SLOT_EXTRA) && CONFIG_MMC_SUNXI_SLOT_EXTRA != -1
+ #define BOOTENV_DEV_MMC_AUTO(devtypeu, devtypel, instance)		\
+ 	BOOTENV_DEV_MMC(MMC, mmc, 0)					\
+ 	BOOTENV_DEV_MMC(MMC, mmc, 1)					\
+@@ -361,7 +361,7 @@
+ 
+ #define BOOT_TARGET_DEVICES_MMC(func) func(MMC_AUTO, mmc_auto, na)
+ #else
+-#define BOOT_TARGET_DEVICES_MMC(func) func(MMC, mmc, 0)
++#define BOOT_TARGET_DEVICES_MMC(func) func(MMC, mmc, 2)
+ #endif
+ #else
+ #define BOOT_TARGET_DEVICES_MMC(func)
+-- 
+2.43.0
