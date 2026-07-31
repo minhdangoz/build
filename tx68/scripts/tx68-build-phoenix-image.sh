@@ -385,6 +385,30 @@ HEARTBEAT_EOF
 	rm -f "${raw_initrd}" "${wrapped_initrd}"
 fi
 
+# Replace the kernel package's DTB with a locally rebuilt one. Used when the DTS
+# under patch/kernel/archive/sunxi-6.18/dt_64/ has been changed but a full
+# armbian kernel rebuild has not been run yet -- recompiling just the DTB is
+# seconds instead of hours, and the boot script loads it straight from /boot.
+# A normal `compile.sh` run regenerates the same file from the same DTS, so this
+# override is a shortcut, never a second source of truth.
+if [[ -n "${TX68_DTB_OVERRIDE:-}" ]]; then
+	[[ -f "${TX68_DTB_OVERRIDE}" ]] ||
+		{ echo "ERROR: TX68_DTB_OVERRIDE not found: ${TX68_DTB_OVERRIDE}" >&2; exit 1; }
+	[[ "$(dd if="${TX68_DTB_OVERRIDE}" bs=4 count=1 status=none | xxd -p)" == "d00dfeed" ]] ||
+		{ echo "ERROR: TX68_DTB_OVERRIDE is not a valid FDT blob" >&2; exit 1; }
+	# /boot/dtb is a symlink to dtb-<release>/, and debugfs does not follow
+	# symlinks, so resolve it to the real directory before writing.
+	dtb_link_target="$(debugfs -R "stat /boot/dtb" "${rootfs_raw}" 2>/dev/null |
+		sed -n 's/^Fast link dest: "\(.*\)"$/\1/p')"
+	dtb_dir="/boot/${dtb_link_target:-dtb}"
+	dtb_path="${dtb_dir}/allwinner/$(basename "${TX68_DTB_OVERRIDE}")"
+	debugfs -R "stat ${dtb_path}" "${rootfs_raw}" 2>/dev/null | grep -q "Inode:" ||
+		{ echo "ERROR: DTB not found in rootfs at ${dtb_path}" >&2; exit 1; }
+	echo "Overriding ${dtb_path} with ${TX68_DTB_OVERRIDE}"
+	debugfs -w -R "rm ${dtb_path}" "${rootfs_raw}" >/dev/null 2>&1 || true
+	debugfs -w -R "write ${TX68_DTB_OVERRIDE} ${dtb_path}" "${rootfs_raw}" >/dev/null
+fi
+
 echo "Installing current TX68 boot script into extracted rootfs"
 boot_cmd="${TX68_BOOT_CMD:-${SRC}/bootscripts/boot-tx68.cmd}"
 [[ -f "${boot_cmd}" ]] ||

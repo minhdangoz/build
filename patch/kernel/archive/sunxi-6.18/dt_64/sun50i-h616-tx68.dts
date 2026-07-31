@@ -52,6 +52,23 @@
 	};
 };
 
+/*
+ * sun50i-h616.dtsi reserves secmon@40000000 (512 KiB), which is where *mainline*
+ * ATF puts BL31. TX68 does not run mainline ATF: it boots the vendor signed
+ * chain, whose BL31 + OP-TEE live at 0x48000000 for 16 MiB (see the "bl31" node
+ * in the vendor FDT, and the "Next image address = 0x4a000000" handoff in the
+ * BL31 banner). Without this, Linux treats that range as free RAM and allocates
+ * into the running secure monitor -- which corrupts kernel memory and produces
+ * wild, unrelated oopses (observed: a dentry with a NULL superblock during an
+ * i2c debugfs create). Keep Linux out of it.
+ */
+&{/reserved-memory} {
+	bl31@48000000 {
+		reg = <0x0 0x48000000 0x0 0x1000000>;
+		no-map;
+	};
+};
+
 &codec {
 	allwinner,audio-routing = "Line Out", "LINEOUT";
 	status = "okay";
@@ -188,17 +205,62 @@
 				regulator-name = "vdd-gpu-sys";
 			};
 
+			/*
+			 * The ramp delay is not optional here. cpufreq raises
+			 * vdd-cpu and then immediately raises the CPU clock;
+			 * the wait in between comes purely from
+			 * _regulator_set_voltage_time() (drivers/regulator/core.c),
+			 * which uses constraints->ramp_delay, else
+			 * desc->ramp_delay, else returns 0. The AXP313A DCDC2
+			 * descriptor is built with AXP_DESC_RANGES(), which
+			 * hardcodes _ramp_delay = 0 -- so with no DT value the
+			 * core waits *zero* microseconds and the core clock goes
+			 * up while the rail is still ramping.
+			 *
+			 * Symptom of getting this wrong: one CPU wedges solid
+			 * partway into systemd startup -- no ticks, timer softirq
+			 * frozen, and no response to the backtrace IPI ("Sending
+			 * NMI from CPU 0 to CPUs 3:" with nothing after it),
+			 * while the other cores keep running. Which core dies
+			 * moves around between boots, the signature of a marginal
+			 * rail rather than a logic bug.
+			 *
+			 * 200 uV/us matches what mainline's own H618 board file
+			 * (sun50i-h618-cpu-dvfs.dtsi, included by
+			 * sun50i-h618-orangepi-zero3.dts) uses for the same PMIC.
+			 * The speed0 bin steps 950000 -> 1100000 uV, so this buys
+			 * 750us of settling.
+			 *
+			 * The regulator-step-delay-us/regulator-final-delay-us
+			 * properties that appear alongside it there are inert --
+			 * no driver in this tree reads them. Not copied.
+			 */
 			reg_dcdc2: dcdc2 {
 				regulator-always-on;
 				regulator-min-microvolt = <810000>;
 				regulator-max-microvolt = <1100000>;
+				regulator-ramp-delay = <200>;
 				regulator-name = "vdd-cpu";
 			};
 
+			/*
+			 * DDR3 at 1.5V (sys_config_tx68.fex: dram_type = 3,
+			 * dram_clk = 648) -- that is what Boot0 trains the DRAM
+			 * at long before Linux runs, and the vendor DT keeps
+			 * this rail on a deliberately wide 0.5-1.84V range so
+			 * nothing ever re-programs it.
+			 *
+			 * A 1360000 min/max here made the regulator core drag
+			 * the live DRAM rail down during probe:
+			 *   vdd-dram: Bringing 1500000uV into 1360000-1360000uV
+			 * after which the board died with RCU stalls on CPU 2/3
+			 * and a flickering HDMI output -- DRAM running below the
+			 * voltage it was trained for. Pin it to the real 1.5V.
+			 */
 			reg_dcdc3: dcdc3 {
 				regulator-always-on;
-				regulator-min-microvolt = <1360000>;
-				regulator-max-microvolt = <1360000>;
+				regulator-min-microvolt = <1500000>;
+				regulator-max-microvolt = <1500000>;
 				regulator-name = "vdd-dram";
 			};
 		};

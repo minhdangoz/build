@@ -63,10 +63,10 @@ if test "${console}" = "display" || test "${console}" = "both"; then
 	# printk lines. That looked exactly like a boot hang (kernel messages
 	# stop, nothing else ever appears) even on a fully successful boot.
 	# List ttyS0 last so /dev/console is the serial port we can actually see.
-	setenv consoleargs "earlycon=uart8250,mmio32,0x05000000 console=tty1 console=ttyS0,115200 keep_bootcon"
+	setenv consoleargs "earlycon=uart8250,mmio32,0x05000000 console=tty1 console=ttyS0,115200"
 fi
 if test "${console}" = "serial"; then
-	setenv consoleargs "earlycon=uart8250,mmio32,0x05000000 console=ttyS0,115200 keep_bootcon"
+	setenv consoleargs "earlycon=uart8250,mmio32,0x05000000 console=ttyS0,115200"
 fi
 
 if test "${devtype}" = "mmc"; then
@@ -77,9 +77,21 @@ fi
 # initrd packaging changes in a way worth telling apart at a glance in the
 # "Kernel command line" log line -- cheaper than comparing SHA-256/filenames
 # across a long debugging session with many near-identical image builds.
-setenv tx68_bootscript_ver "6-heartbeat"
+setenv tx68_bootscript_ver "10-cpuramp-1080p"
 
-setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} consoleblank=0 loglevel=${verbosity} ubootpart=${partuuid} tx68_bootscript_ver=${tx68_bootscript_ver} ${extraargs} ${extraboardargs}"
+# Left to itself the driver took the TV's preferred mode, which on real
+# hardware was 4K: "Console: switching to colour frame buffer device 480x135"
+# is 480x135 *characters* at the 8x16 boot font = 3840x2160 pixels. Nothing
+# ever appeared on the screen at that mode, and the HDMI hotplug state went
+# 1 -> 2 ("EVENT=plugout") a minute in, i.e. the sink stopped acknowledging.
+# sun8i_dw_hdmi_mode_valid_h6() only rejects above 594 MHz, so 4K@60 is
+# offered even though the H616 PHY is not reliable at that TMDS rate.
+# Pin the sink to 1080p60, which is what a TV box needs anyway. This is a
+# kernel cmdline knob, not a DT one -- changing it does not need a DTB or
+# kernel rebuild, just a repack. Drop it to let the EDID decide again.
+setenv videoargs "video=HDMI-A-1:1920x1080@60"
+
+setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} ${videoargs} consoleblank=0 loglevel=${verbosity} ubootpart=${partuuid} tx68_bootscript_ver=${tx68_bootscript_ver} ${extraargs} ${extraboardargs}"
 if test "${docker_optimizations}" = "on"; then
 	setenv bootargs "${bootargs} cgroup_enable=memory swapaccount=1"
 fi

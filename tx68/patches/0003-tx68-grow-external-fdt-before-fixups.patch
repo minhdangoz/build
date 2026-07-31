@@ -24,7 +24,17 @@ pointer and left on the original path, so the vendor 5.4 boot flow is unchanged.
 ---
 --- a/common/image-fdt.c
 +++ b/common/image-fdt.c
-@@ -469,6 +469,43 @@
+@@ -15,6 +15,9 @@
+ #include <linux/libfdt.h>
+ #include <mapmem.h>
+ #include <asm/io.h>
++#ifdef CONFIG_ARCH_SUNXI
++#include <private_uboot.h>
++#endif
+ 
+ #ifndef CONFIG_SYS_FDT_PAD
+ #define CONFIG_SYS_FDT_PAD 0x3000
+@@ -469,6 +472,99 @@
  	int ret = -EPERM;
  	int fdt_ret;
  
@@ -62,6 +72,62 @@ pointer and left on the original path, so the vendor 5.4 boot flow is unchanged.
 +		 * of fdt_shrink_to_minimum(); do the equivalent here.
 +		 */
 +		of_size = fdt_totalsize(blob);
++
++		/*
++		 * Nothing on the Linux bootm path in this tree ever calls
++		 * arch_fixup_fdt() -- it is only wired up for VxWorks and SPL.
++		 * Allwinner gets away with that because they inject /memory
++		 * into their own control FDT during board init ("update dts"),
++		 * so gd->fdt_blob always arrives with it already present.
++		 *
++		 * A DTB loaded from disk has no /memory node at all (mainline
++		 * sunxi DTs deliberately leave it to the bootloader), so the
++		 * kernel came up with zero usable RAM and panicked in
++		 * paging_init(): "Failed to allocate page table page" from
++		 * early_pgtable_alloc(). Populate it from gd->bd->bi_dram[],
++		 * which U-Boot has already sized correctly.
++		 */
++		ret = arch_fixup_fdt(blob);
++		if (ret) {
++			printf("ERROR: memory fixup failed: %s\n",
++			       fdt_strerror(ret));
++			goto err;
++		}
++
++		/*
++		 * dram_init() in board/sunxi/board.c clamps the DRAM size to
++		 * 2048 MiB ("dram_size > 2048 ? 2048 : dram_size"). That clamp
++		 * is right for U-Boot itself -- the byte count there is computed
++		 * in a 32-bit uint (4096 * 1024 * 1024 overflows to 0), and this
++		 * 32-bit U-Boot cannot relocate itself above 4 GiB anyway -- but
++		 * it must not reach the kernel: arch_fixup_fdt() above derives
++		 * /memory from gd->bd->bi_dram[], which inherits the clamped
++		 * gd->ram_size, so a 4 GiB TX68 would boot Linux with 2 GiB.
++		 *
++		 * boot_data.dram_scan_size is Boot0's real scan result and is in
++		 * MiB, so it never hit that overflow. Redo /memory from it in
++		 * 64-bit arithmetic when it exceeds the clamp. Only the FDT
++		 * handed to Linux is touched: gd->ram_size, gd->ram_top and the
++		 * LMB state stay exactly as U-Boot computed them, so U-Boot's
++		 * own relocation and allocations are unaffected. On a 2 GiB
++		 * board this branch is not taken at all.
++		 */
++		if (uboot_spare_head.boot_data.dram_scan_size > 2048) {
++			u64 ram_start = CONFIG_SYS_SDRAM_BASE;
++			u64 ram_size =
++				(u64)uboot_spare_head.boot_data.dram_scan_size << 20;
++
++			ret = fdt_fixup_memory_banks(blob, &ram_start,
++						     &ram_size, 1);
++			if (ret) {
++				printf("ERROR: /memory fixup failed: %s\n",
++				       fdt_strerror(ret));
++				goto err;
++			}
++			printf("Linux /memory: %llu MiB @ 0x%llx (U-Boot uses %lu MiB)\n",
++			       ram_size >> 20, ram_start,
++			       (ulong)(gd->ram_size >> 20));
++		}
 +	}
 +#endif
 +
