@@ -46,6 +46,21 @@ setenv bootlogo "false"
 
 echo "TX68 Linux 6.18 canary boot script loaded from ${devtype} ${devnum}"
 
+# armbian's own tooling writes /boot/armbianEnv.txt -- that is the file that
+# actually exists on a built image, and the one a user will find and edit.
+# Reading only orangepiEnv.txt (inherited from the Orange Pi tree) meant every
+# setting armbian put there was silently ignored. Both are read, armbian's
+# first, so a hand-made orangepiEnv.txt still wins if someone has one.
+#
+# This is the no-reflash escape hatch: editing /boot/armbianEnv.txt and
+# rebooting changes the kernel command line. Useful keys here are
+#   extraargs=...   appended verbatim to bootargs (see the end of this script)
+#   verbosity=N     kernel loglevel
+#   rootdev=...     overrides the PARTUUID derived below
+if test -e ${devtype} ${devnum} ${prefix}armbianEnv.txt; then
+	load ${devtype} ${devnum} ${load_addr} ${prefix}armbianEnv.txt
+	env import -t ${load_addr} ${filesize}
+fi
 if test -e ${devtype} ${devnum} ${prefix}orangepiEnv.txt; then
 	load ${devtype} ${devnum} ${load_addr} ${prefix}orangepiEnv.txt
 	env import -t ${load_addr} ${filesize}
@@ -73,22 +88,53 @@ if test "${devtype}" = "mmc"; then
 	part uuid ${devtype} ${devnum}:1 partuuid
 fi
 
+# Do NOT hardcode root=/dev/mmcblkNp1. Linux numbers mmc hosts by probe order,
+# not by controller address, and TX68 now has two of them: the eMMC on
+# mmc@4022000 and the AIC8800 SDIO WiFi on mmc@4021000. Whichever finishes
+# probing first takes index 0, so the eMMC shows up as mmcblk0 on some boots
+# and mmcblk1 on others -- observed on real hardware as an intermittent
+#   ALERT! /dev/mmcblk0p1 does not exist. Dropping to a shell!
+# right after "mmc0: new SDIO card at address a281 / mmc1: new HS200 MMC card".
+# Before WiFi was enabled the eMMC was the only host, so index 0 was stable and
+# the bug was invisible.
+#
+# PARTUUID comes from the GPT entry of the partition U-Boot itself just booted
+# from, so it names the right filesystem no matter how Linux enumerates. Keep
+# the /dev/ path only as a fallback for the case where `part uuid` yields
+# nothing.
+# Only auto-derive when nothing better was supplied. armbianEnv.txt ships
+# rootdev=UUID=<filesystem uuid>, which is more robust still (it survives
+# repartitioning), so an explicit value from the env file must not be clobbered.
+if test "${rootdev}" = "/dev/mmcblk0p1"; then
+	if test -n "${partuuid}"; then
+		setenv rootdev "PARTUUID=${partuuid}"
+	fi
+fi
+
 # Visible-on-purpose marker, bumped by hand whenever this boot script or the
 # initrd packaging changes in a way worth telling apart at a glance in the
 # "Kernel command line" log line -- cheaper than comparing SHA-256/filenames
 # across a long debugging session with many near-identical image builds.
-setenv tx68_bootscript_ver "10-cpuramp-1080p"
+setenv tx68_bootscript_ver "16-audit"
 
-# Left to itself the driver took the TV's preferred mode, which on real
-# hardware was 4K: "Console: switching to colour frame buffer device 480x135"
-# is 480x135 *characters* at the 8x16 boot font = 3840x2160 pixels. Nothing
-# ever appeared on the screen at that mode, and the HDMI hotplug state went
-# 1 -> 2 ("EVENT=plugout") a minute in, i.e. the sink stopped acknowledging.
-# sun8i_dw_hdmi_mode_valid_h6() only rejects above 594 MHz, so 4K@60 is
-# offered even though the H616 PHY is not reliable at that TMDS rate.
-# Pin the sink to 1080p60, which is what a TV box needs anyway. This is a
-# kernel cmdline knob, not a DT one -- changing it does not need a DTB or
-# kernel rebuild, just a repack. Drop it to let the EDID decide again.
+# Left to itself the driver takes the TV's preferred mode. The attached TV
+# lists 3840x2160 ten times before anything else (see
+# /sys/class/drm/card0-HDMI-A-1/modes), so that is what it picked --
+# "Console: switching to colour frame buffer device 480x135" is 480x135
+# *characters* at the 8x16 boot font = 3840x2160 pixels.
+#
+# Historical note, kept because it was nearly a wrong fix: this line was first
+# added on the theory that 4K was why the screen stayed black. It was not --
+# the black screen was a bad HDMI cable, and 4K did come up once the cable was
+# replaced. The mode pin stays anyway, for the real reason: 4K is too slow to
+# use on this box, while 1080p60 with GPU acceleration is smooth.
+#
+# This is a kernel cmdline knob, not a DT one -- changing it needs neither a
+# DTB nor a kernel rebuild, just a repack. Drop it to let the EDID decide, or
+# override per-boot from the U-Boot prompt with
+#   setenv extraargs "video=HDMI-A-1:2560x1440@60"
+# which wins because extraargs is appended after this and the parser in
+# drivers/video/cmdline.c keeps the last match for a connector.
 setenv videoargs "video=HDMI-A-1:1920x1080@60"
 
 setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} ${videoargs} consoleblank=0 loglevel=${verbosity} ubootpart=${partuuid} tx68_bootscript_ver=${tx68_bootscript_ver} ${extraargs} ${extraboardargs}"

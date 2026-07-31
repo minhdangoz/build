@@ -18,6 +18,7 @@
 #include "sun50i-h616-cpu-opp.dtsi"
 
 #include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/interrupt-controller/irq.h>
 
 / {
 	model = "TX68";
@@ -49,6 +50,64 @@
 		regulator-min-microvolt = <5000000>;
 		regulator-max-microvolt = <5000000>;
 		regulator-always-on;
+	};
+
+	/*
+	 * WL_REG_ON. The vendor DT calls this wlan_regon = <&pio PG 18
+	 * GPIO_ACTIVE_HIGH> and drives it high to release the chip;
+	 * mmc-pwrseq-simple states the same line as its (active-low) reset,
+	 * so ACTIVE_LOW here means exactly the same electrical behaviour.
+	 */
+	/*
+	 * VBUS switch for the USB port on PHY0. The vendor DT drives it from
+	 * PH8 (usb0_drvvbus, active high) and hands it to both &ehci0 and
+	 * &ohci0. Without it that port enumerates nothing, because nothing ever
+	 * turns its 5V on -- everything still "works" as long as you only use
+	 * the other three ports, which is why this went unnoticed.
+	 */
+	reg_usb0_vbus: usb0-vbus {
+		compatible = "regulator-fixed";
+		regulator-name = "usb0-vbus";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		regulator-enable-ramp-delay = <1000>;
+		gpio = <&pio 7 8 GPIO_ACTIVE_HIGH>; /* PH8 */
+		enable-active-high;
+		vin-supply = <&reg_vcc5v>;
+	};
+
+	/* 500ns period -> 2MHz, the AC300 EPHY's clock input. */
+	ac300_pwm_clk: ac300-clk {
+		compatible = "pwm-clock";
+		#clock-cells = <0>;
+		pwms = <&pwm 5 500 0>;
+		clock-frequency = <2000000>;
+		status = "okay";
+	};
+
+	wifi_pwrseq: wifi-pwrseq {
+		compatible = "mmc-pwrseq-simple";
+		clocks = <&rtc 1>;
+		clock-names = "osc32k-out";
+		reset-gpios = <&pio 6 18 GPIO_ACTIVE_LOW>; /* PG18 */
+		post-power-on-delay-ms = <200>;
+	};
+
+	/*
+	 * Platform device for the aic8800_btlpm DKMS module (NOT a mainline
+	 * binding -- "allwinner,sunxi-btlpm" is this out-of-tree driver's own
+	 * of_match_table entry, verified by reading aic8800_btlpm.c). Without
+	 * this node the module's platform_driver never probes, BT_WAKE is
+	 * never toggled, and the BT core stays asleep forever: hciattach
+	 * brings up hci0 on /dev/ttyS1 but every HCI command times out,
+	 * confirmed on real hardware (`hci0: Opcode 0x1003 failed: -110`)
+	 * with this node absent.
+	 */
+	bt_lpm: bt-lpm {
+		compatible = "allwinner,sunxi-btlpm";
+		bt_wake = <&pio 6 17 GPIO_ACTIVE_HIGH>; /* PG17 */
+		bt_hostwake = <&pio 6 16 GPIO_ACTIVE_HIGH>; /* PG16 */
+		status = "okay";
 	};
 };
 
@@ -98,15 +157,65 @@
 	status = "okay";
 };
 
+/*
+ * Ethernet is the co-packaged AC300 EPHY, not a discrete PHY on the MDIO bus.
+ *
+ * The giveaway is in the vendor DT: it enables &pwm5 on PA12 (pwm5_pin_a) for
+ * no visible consumer. That PWM *is* the AC300's 2 MHz input clock. Together
+ * with CLK_EMAC_25M it is what makes the AC300 start driving the RMII 50 MHz
+ * REF_CLK back into the MAC.
+ *
+ * Describing this as a plain external PHY (phy-handle straight at mdio1, node
+ * left with the stock "allwinner,sun50i-h616-emac" compatible) compiles and
+ * probes, but neither clock is ever requested, so the AC300 stays dead, no
+ * REF_CLK comes back, and the DMA soft-reset bit in EMAC_BASIC_CTL1 never
+ * clears:
+ *     dwmac-sun8i 5030000.ethernet: EMAC reset timeout
+ *     probe with driver dwmac-sun8i failed with error -110
+ * That failure happens before the PHY is ever addressed, which is why it looks
+ * nothing like a PHY problem.
+ *
+ * Layout below follows sun50i-h618-orangepi-zero2w.dts, which is the same
+ * H618 + AC300 arrangement. Note this is NOT how the H616 TV boxes in this tree
+ * (x96-mate, x96q) do it -- those have a real external RMII PHY, so copying
+ * them is what produced the broken version above.
+ */
 &emac1 {
+	compatible = "allwinner,sun50i-h616-internal-emac";
 	allwinner,rx-delay-ps = <3100>;
 	allwinner,tx-delay-ps = <700>;
-	phy-handle = <&ext_rmii_phy>;
+	phy-handle = <&ac300_ephy>;
 	phy-mode = "rmii";
 	phy-supply = <&reg_dldo1>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&rmii_pins>;
 	status = "okay";
+
+	mdio-mux {
+		compatible = "allwinner,sun8i-h3-mdio-mux";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		mdio-parent-bus = <&mdio1>;
+
+		internal_mdio: mdio@1 {
+			compatible = "allwinner,sun8i-h3-mdio-internal";
+			reg = <1>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			ac300_ephy: ethernet-phy@0 {
+				compatible = "ethernet-phy-id0044.1400",
+					     "allwinner,sun50i-h618-ac300-ephy",
+					     "ethernet-phy-ieee802.3-c22";
+				reg = <0>;
+				clocks = <&ccu CLK_EMAC_25M>, <&ac300_pwm_clk>;
+				clock-names = "ephy", "pwm";
+				nvmem-cells = <&ephy_calibration>;
+				nvmem-cell-names = "calibration";
+				status = "okay";
+			};
+		};
+	};
 };
 
 &gpu {
@@ -129,13 +238,90 @@
 	status = "okay";
 };
 
-&mdio1 {
-	ext_rmii_phy: ethernet-phy@0 {
-		compatible = "ethernet-phy-ieee802.3-c22";
-		reg = <0>;
+/* AC300 EPHY calibration data, burned per-chip in the eFuse. */
+&sid {
+	ephy_calibration: ephy-calibration@2c {
+		reg = <0x2c 0x2>;
 	};
 };
 
+/* PA12 -> PWM5 -> AC300 clock input. Vendor DT enables the same pin. */
+&pwm {
+	status = "okay";
+};
+
+&pwm5 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pwm5_pin>;
+	clk_bypass_output = <0x1>;
+	status = "okay";
+};
+
+/*
+ * SDIO WiFi. The chip is an AIC8800DC -- confirmed from the Android BSP, which
+ * ships longan/kernel/linux-5.4/drivers/net/wireless/aic8800/ plus
+ * hardware/aic/{wlan,libbt}/firmware/aic8800/aic8800dc. It is NOT the UWE5622
+ * that the other H616 TV-box boards in this tree enable, so do not turn on the
+ * uwe5622-allwinner extension for TX68.
+ *
+ * Rails mirror the vendor &sdc1: vmmc from the 3.3V rail, vqmmc from the 1.8V
+ * one. The vendor also puts the whole PG bank on a 1.8V supply
+ * (vcc-pg-supply = <&reg_pio1_8>), which is why the bus signalling is fixed at
+ * 1.8V and the vendor sets sunxi-dis-signal-vol-sw -- there is no 3.3V state to
+ * switch back to. &pio below already maps vcc-pg-supply to the same 1.8V aldo1.
+ */
+&mmc1 {
+	vmmc-supply = <&reg_dldo1>;
+	vqmmc-supply = <&reg_aldo1>;
+	mmc-pwrseq = <&wifi_pwrseq>;
+	bus-width = <4>;
+	non-removable;
+	cap-sdio-irq;
+	keep-power-in-suspend;
+	/*
+	 * SDIO only. Vendor &sdc1 sets these too. Without them the MMC core
+	 * also runs the MMC and SD identification sequences against the
+	 * AIC8800 before falling back to SDIO, which is pure delay on every
+	 * boot and gives a non-memory card a chance to be misidentified.
+	 */
+	no-mmc;
+	no-sd;
+	status = "okay";
+
+	wlan: wifi@1 {
+		reg = <1>;
+		interrupt-parent = <&pio>;
+		/* Vendor: wlan_hostwake = <&pio PG 15 GPIO_ACTIVE_HIGH> */
+		interrupts = <6 15 IRQ_TYPE_EDGE_RISING>; /* PG15 WL_HOST_WAKE */
+		interrupt-names = "host-wake";
+	};
+};
+
+/*
+ * eMMC. Deliberately NOT HS200 -- read this before "optimising" it back.
+ *
+ * HS200 requires CMD21 tuning to place the sampling point. sunxi-mmc does not
+ * implement mmc_host_ops.execute_tuning at all, so mmc_execute_tuning() quietly
+ * returns success and HS200 runs untuned, leaning entirely on the controller's
+ * hardware auto-calibration. That is marginal, and the margin depends on the
+ * eMMC part fitted:
+ *   - board with Samsung-style HAG4a2 (14.7 GiB): HS200 @100 MHz ran fine
+ *   - board with CJNB4R (58.2 GiB): repeated
+ *       sunxi-mmc 4022000.mmc: data error, sending stop command
+ *     (the manual-CMD12 path, only reached on a real CRC/timeout on the bus),
+ *     then every execve() wedged in d_alloc_parallel and khungtaskd panicked.
+ *
+ * Almost no other H616 board in this tree enables HS200: bigtreetech-cb1-emmc
+ * and sovol-sv08 go as far as no-1-8-v, sovol also caps at 45 MHz, x96q and
+ * bananapi-m4-berry leave it off. The single exception is x96-mate, which is
+ * where this node was originally copied from -- the same board that also gave
+ * us the wrong Ethernet PHY arrangement. Do not treat it as the reference.
+ *
+ * DDR52 keeps 8-bit 1.8V transfers (~100 MB/s, plenty for this box) with far
+ * more timing margin, and needs no tuning. If eMMC errors ever come back,
+ * suspect aldo1: it feeds both the PC bank (eMMC signalling) and the PG bank
+ * (AIC8800), so the WiFi chip and the eMMC share a 1.8V rail.
+ */
 &mmc2 {
 	vmmc-supply = <&reg_dldo1>;
 	vqmmc-supply = <&reg_aldo1>;
@@ -143,8 +329,7 @@
 	non-removable;
 	cap-mmc-hw-reset;
 	mmc-ddr-1_8v;
-	mmc-hs200-1_8v;
-	max-frequency = <100000000>;
+	max-frequency = <52000000>;
 	status = "okay";
 };
 
@@ -273,11 +458,32 @@
 	status = "okay";
 };
 
+/*
+ * Bluetooth side of the AIC8800DC, on UART1 with hardware flow control
+ * (vendor &btlpm: uart_index = <1>). No child "bluetooth" node here on
+ * purpose: there is no mainline serdev compatible for this part, and
+ * inventing one would bind the wrong line discipline. Enabling the port
+ * gives userspace /dev/ttyS1, which is what hciattach uses.
+ *   BT_RST       PG19, active low   (vendor bt_rst_n) -- not wired below,
+ *                unused by the DKMS aic8800_btlpm driver (grep confirmed:
+ *                it only requests bt_wake and bt_hostwake)
+ *   BT_WAKE      PG17, active high  (vendor bt_wake)
+ *   BT_HOST_WAKE PG16, active high  (vendor bt_hostwake)
+ */
+&uart1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart1_pins>, <&uart1_rts_cts_pins>;
+	uart-has-rtscts;
+	status = "okay";
+};
+
+
 &usbotg {
 	dr_mode = "host";
 	status = "okay";
 };
 
 &usbphy {
+	usb0_vbus-supply = <&reg_usb0_vbus>;
 	status = "okay";
 };

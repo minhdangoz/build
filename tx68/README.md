@@ -2,8 +2,16 @@
 
 Hướng dẫn build ảnh Linux mainline cho TV box TX68 / m1k_go.
 
-Nền tảng lý thuyết (vì sao phải dùng U-Boot vendor, secure boot hoạt động ra sao)
-nằm ở [`docs/SECURE_BOOT.md`](../docs/SECURE_BOOT.md). File này chỉ nói **cách làm**.
+File này chỉ nói **cách làm**. Hai file kia trả lời hai câu hỏi khác:
+
+| Cần biết | Đọc |
+|---|---|
+| Phần cứng là gì — chân, điện áp, xung, chip nào | [`docs/TX68_HARDWARE.md`](../docs/TX68_HARDWARE.md) |
+| Vì sao phải dùng U-Boot vendor, secure boot chạy ra sao | [`docs/SECURE_BOOT.md`](../docs/SECURE_BOOT.md) |
+
+> **Trước khi sửa DTS, đọc `TX68_HARDWARE.md`.** Gần như mọi lỗi tốn nhiều thời
+> gian nhất của dự án đều là một con số bị đoán thay vì tra. Con số nào chưa có
+> trong file đó thì đi tìm nguồn vendor rồi ghi vào, đừng đoán.
 
 ---
 
@@ -64,6 +72,7 @@ cd /media/jimmy/WORK/AOSP/build
   BRANCH=current \
   RELEASE=noble \
   BUILD_DESKTOP=yes \
+  DESKTOP_TIER=mid \
   DESKTOP_ENVIRONMENT=gnome \
   KERNEL_CONFIGURE=no
 ```
@@ -74,6 +83,9 @@ Kết quả: `output/images/Armbian-unofficial_..._gnome_desktop.img`
 
 Lưu ý `DESKTOP_TIER` mặc định là `mid` khi chạy không tương tác, nên rootfs khá to
 (~5.7 GB). Đặt `DESKTOP_TIER=minimal` nếu muốn nhỏ hơn.
+
+X11 được ép mặc định (GNOME chạy trên Xorg, không phải Wayland) tự động qua hook
+`post_family_tweaks__tx68` trong `config/boards/tx68.conf` — không cần thêm biến gì.
 
 Bước này lâu (hàng giờ). **Chỉ cần chạy lại khi đổi kernel config hoặc rootfs.**
 Sửa DTS thì xem mục 4, nhanh hơn nhiều.
@@ -109,6 +121,21 @@ Kết quả: `output/phoenix/..._<timestamp>_phoenixsuite.img`
 
 Script này ký TOC1 bằng khoá vendor, bọc kernel thành uImage (`-A arm`), bọc lại
 uInitrd, và gói tất cả vào container IMAGEWTY.
+
+Nó cũng chép `userpatches/firstboot.conf` vào `/root/.not_logged_in_yet` để bỏ
+wizard first-boot. Nếu không có bước này thì mỗi lần flash lại phải gõ lại toàn
+bộ wizard, vì bước chép của armbian chỉ chạy trong full `compile.sh`, không chạy
+khi đóng gói lại rootfs có sẵn. Muốn giữ wizard gốc: `TX68_FIRSTBOOT_CONF=none`.
+
+> Ảnh **chưa** qua bước preseed thì đăng nhập bằng `root` / `1234`
+> (`ROOTPWD` ở `lib/functions/configuration/main-config.sh`), rồi wizard chạy.
+
+Full auto-login (không cần gõ gì, kể cả trên console/serial trước khi GDM
+hiện) cần **cả hai** biến trong `config/boards/tx68.conf`:
+`DESKTOP_AUTOLOGIN="yes"` (GDM) và `CONSOLE_AUTOLOGIN="yes"` (getty tty1 +
+ttyS0). Thiếu `CONSOLE_AUTOLOGIN` thì vẫn hiện prompt đăng nhập ở console
+trước khi vào desktop — đây chính là "prompt lạ" từng thấy trên phần cứng
+thật trước khi sửa.
 
 ### Bước 4 — Nạp
 
@@ -199,19 +226,28 @@ hành vi chuẩn của U-Boot, thứ mà kernel vendor không cần nhưng mainl
 | `Failed to allocate page table page` | DTB không có node `/memory`; U-Boot không gọi `arch_fixup_fdt()` trên đường Linux | patch `0003` |
 | Máy 4 GB chỉ thấy 2 GB | `dram_init()` kẹp cứng 2048 MiB | patch `0003` |
 | Oops `__d_alloc` lúc i2c probe | DT thiếu reservation BL31 → Linux cấp phát đè lên secure monitor | DTS: `bl31@48000000` |
-| RCU stall CPU 2/3, HDMI chớp liên tục | DTS ép `dcdc3` xuống 1.36 V trong khi DDR3 chạy 1.5 V | DTS: `reg_dcdc3` |
+| `vdd-dram: Bringing 1500000uV into 1360000-1360000uV` | DTS ép `dcdc3` xuống 1.36 V trong khi Boot0 huấn luyện DDR3 ở 1.5 V (KHÔNG phải nguyên nhân RCU stall — xem đính chính trong TX68_HARDWARE.md mục 4.1) | DTS: `reg_dcdc3` |
 | Một CPU treo cứng giữa lúc systemd khởi động (không đáp IPI backtrace) | `vdd-cpu` thiếu `regulator-ramp-delay`; AXP313A dựng desc bằng `AXP_DESC_RANGES()` → `ramp_delay = 0` → cpufreq nâng xung ngay khi chưa kịp lên áp | DTS: `reg_dcdc2` |
 | Màn hình đen dù `[drm] Initialized sun4i-drm` | Tự lấy mode ưa thích của TV = 4K; PHY H616 không chạy nổi TMDS đó | cmdline `video=HDMI-A-1:1920x1080@60` |
+| `EMAC reset timeout`, `probe ... failed with error -110` | Ethernet là AC300 EPHY đồng gói, không phải PHY rời. Thiếu `CLK_EMAC_25M` + clock PWM5 (PA12) nên AC300 không chạy → không có REF_CLK → bit reset không bao giờ tự xoá | DTS: `&emac1` kiểu `internal-emac` + `mdio-mux` + `ac300_pwm_clk` |
 | Mọi dòng log in đúp | `keep_bootcon` giữ earlycon, cả nó và ttyS0 cùng ghi ra một UART | bỏ khỏi `bootscripts/` |
 | `Unsupported Architecture 0x16` | U-Boot 32-bit từ chối uImage gắn thẻ arm64 | script đóng gói dùng `-A arm` |
 | initramfs hỏng magic | `bootm` dời ramdisk vào vùng BL31 | `initrd_high=0xffffffff` |
+| WiFi: `aicbt_patch_table_alloc fail` | Module `aic8800_bsp_sdio` đọc firmware bằng `filp_open()` (không phải `request_firmware()`), tham số `aic_fw_path` mặc định rỗng và fallback cứng trong Makefile trỏ sai chip (8800D80) | `/etc/modprobe.d/aic8800.conf`: `aic_fw_path=/lib/firmware/aic8800_fw/SDIO/aic8800` (đường dẫn **tuyệt đối**, xem chú thích trong `config/boards/tx68.conf`) |
+| BT: `hci0: Opcode 0x1003 failed: -110` (mọi lệnh HCI timeout) | Driver `aic8800_btlpm` cần node DT riêng (`allwinner,sunxi-btlpm`) để bind và điều khiển BT_WAKE/BT_HOSTWAKE; thiếu node này thì chip BT không bao giờ được đánh thức | DTS: node `bt-lpm` (PG17 `bt_wake`, PG16 `bt_hostwake`) |
+| BT vẫn không lên dù đã có node `bt-lpm` | GPIO PG16 (`bt_hostwake`, = gpio-208) đã bị driver **UNISOC WCN "marlin"** build sẵn trong kernel (`CONFIG_WCN_BSP_DRIVER_BUILDIN=y`, dành cho chip UWE5622 mà board này không có) giữ mất từ lúc t=2s, trước khi driver của ta kịp nạp — xác nhận bằng `cat /sys/kernel/debug/gpio` thấy `gpio-208` do `bt-wake-host-gpio` giữ | `config/kernel/linux-sunxi64-current.config`: tắt `CONFIG_WCN_BSP_DRIVER_BUILDIN`, `CONFIG_WLAN_UWE5621/5622`, `CONFIG_UNISOC_WIFI_PS` |
 
 ### Còn tồn đọng
 
-- `dwmac-sun8i: EMAC reset timeout` — Ethernet chưa lên. Cấu hình (`emac1`, `rmii`)
-  đã khớp DT vendor, chưa rõ nguyên nhân.
-- WiFi/BT chưa làm. Chip thật là AIC8800 (SDIO), **không phải** UWE5622 mà
-  `orangepizero3.csc` bật — đừng bật `uwe5622-allwinner`.
+- Chip WiFi/BT thực tế tự nhận diện qua SDIO là **AIC8801** (chip_rev U03/U04), KHÔNG phải AIC8800DC như tên thư mục driver trong Android BSP gợi ý — xác nhận bằng log SDIO probe trên phần cứng thật (`vid:0x5449 did:0x0145` → `PRODUCT_ID_AIC8801`). WiFi + Bluetooth đã chạy được (xem bảng lỗi ở trên); board TX68 khác có thể báo chip khác, đừng giả định lại mà hãy tra log.
+- USB0 (PHY0): mặc định đã ép **host mode** (`&usbotg { dr_mode = "host"; }`), tương đương "tắt" chế độ OTG debug kiểu Android. Đây là giá trị **biên dịch cứng trong DTB**, không có cách chuyển qua lại bằng biến U-Boot bootenv — driver `musb-sunxi`/`dwc2` không lộ sysfs role-switch trên board này (đã kiểm tra `/sys/class/*/role`, không tồn tại). Muốn đổi sang OTG/peripheral phải sửa `dr_mode` trong DTS rồi build lại DTB.
+- eMMC không tự expand: GPT vendor (`phoenix-config/sys_partition.fex`) chia sẵn 2 partition (rootfs ~5.7G + userdata ~52G) sát nhau, không còn khoảng trống để `armbian-resize-filesystem` mở rộng rootfs (service này ở trạng thái `disabled`, không phải lỗi). Đã thêm service `tx68-userdata-mount` để tự format + mount partition 2 vào `/data` thay vì để trống. Muốn rootfs lớn hơn thật sự phải sửa lại GPT trong `phoenix-config/sys_partition.fex` — chưa làm vì đụng tới cấu trúc phân vùng, cần quyết định riêng.
+- WiFi/BT: **đã chạy được** (SDIO WiFi scan/associate, BT hci0 lên). Chip SDIO
+  là AIC8801 chứ không phải AIC8800DC (xem trên). Đã bật `radxa-aic8800` với
+  `AIC8800_TYPE="sdio"` trong `config/boards/tx68.conf`; DT có `&mmc1` +
+  `wifi_pwrseq` (PG18), node `bt-lpm` (PG16/PG17), và `&uart1` cho BT. **Không**
+  bật `uwe5622-allwinner`. Extension này tải .deb từ `github.com/radxa-pkg/aic8800`
+  lúc build, cache ở `cache/radxa-aic8800-debs/`.
 
 ---
 

@@ -420,6 +420,28 @@ debugfs -w -R "write ${boot_cmd} /boot/boot.cmd" "${rootfs_raw}" >/dev/null
 debugfs -w -R "rm /boot/boot.scr" "${rootfs_raw}" >/dev/null
 debugfs -w -R "write ${boot_scr} /boot/boot.scr" "${rootfs_raw}" >/dev/null
 
+# armbian-firstlogin sources /root/.not_logged_in_yet and skips every prompt it
+# finds a PRESET_* for. A full compile.sh puts userpatches/firstboot.conf there,
+# but repacking an already-built rootfs (the fast path used all through bring-up)
+# never re-runs that step, so a freshly flashed image still stops at the
+# interactive wizard and the preseeded account does not exist yet -- which looks
+# exactly like "Login incorrect". Inject it here so a repack behaves like a full
+# build. Set TX68_FIRSTBOOT_CONF=none to keep the stock wizard.
+firstboot_conf="${TX68_FIRSTBOOT_CONF:-${SRC}/../userpatches/firstboot.conf}"
+if [[ "${firstboot_conf}" == none ]]; then
+	echo "Leaving the stock Armbian first-login wizard in place"
+elif [[ -f "${firstboot_conf}" ]]; then
+	echo "Preseeding first login from ${firstboot_conf}"
+	debugfs -w -R "rm /root/.not_logged_in_yet" "${rootfs_raw}" >/dev/null 2>&1 || true
+	debugfs -w -R "write ${firstboot_conf} /root/.not_logged_in_yet" "${rootfs_raw}" >/dev/null
+	# Sourced by a root shell on every login until setup completes; keep it 0600.
+	debugfs -w -R "sif /root/.not_logged_in_yet mode 0100600" "${rootfs_raw}" >/dev/null
+	preset_user="$(sed -n 's/^PRESET_USER_NAME="\(.*\)"$/\1/p' "${firstboot_conf}")"
+	echo "  first boot will create user: ${preset_user:-<unset>}"
+else
+	echo "WARNING: no firstboot.conf at ${firstboot_conf}; interactive wizard stays" >&2
+fi
+
 echo "Checking extracted ext4 filesystem"
 e2fsck -fn "${rootfs_raw}"
 
