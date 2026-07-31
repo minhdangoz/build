@@ -1,0 +1,62 @@
+From: TX68 Build <tx68@local>
+Subject: [PATCH] tx68: honour an explicit FDT address passed to bootm
+
+Allwinner's vendor U-Boot (v2018.05-h618) never calls boot_get_fdt() under
+CONFIG_ARCH_SUNXI. It hardcodes images.ft_addr to gd->fdt_blob -- U-Boot's own
+control FDT, which on TX68 is the "dtb" item inside the signed TOC1
+(sunxi.fex, model "sun50iw9"). The third `bootm` argument is silently ignored.
+
+That is correct for the vendor 5.4 kernel, which expects exactly that vendor
+DT. It makes booting a mainline kernel impossible: mainline Linux 6.18 came up
+on the vendor Android DT, so none of its drivers matched (in particular there
+is no node mainline's sunxi-mmc binds to), the eMMC never probed, and
+`root=/dev/mmcblk0p1 rootwait` hung forever with no diagnostic on the console.
+The giveaway in the boot log is `Machine model: sun50iw9` where our DTS says
+`model = "TX68"`, plus `FDT addr: bbeccbf8` -- gd->fdt_blob relocated to
+top-of-RAM, not the 0x46000000 the boot script loaded the real DTB to.
+
+Honour an explicitly supplied FDT address (argv[2]) when there is one, exactly
+as the generic non-sunxi path already does, and fall back to the control FDT
+otherwise. gd->fdt_blob is untouched, so U-Boot's own drivers keep using the
+vendor control FDT and the existing vendor boot flow is unaffected.
+---
+--- a/common/bootm.c
++++ b/common/bootm.c
+@@ -294,8 +294,35 @@
+ 		return 1;
+ 	}
+ #endif
+-	images.ft_addr = (char *)gd->fdt_blob;
+-	images.ft_len  = gd->fdt_size;
++	/*
++	 * Allwinner's original code unconditionally handed the kernel U-Boot's
++	 * own control FDT (gd->fdt_blob -- the "dtb" item inside the signed
++	 * TOC1, i.e. sunxi.fex, model "sun50iw9") and never called
++	 * boot_get_fdt() at all, so a third `bootm` argument was silently
++	 * discarded. That is fine for the vendor 5.4 kernel, which expects
++	 * exactly that vendor DT, but it makes booting a mainline kernel
++	 * impossible: mainline Linux came up on the vendor Android DT, none of
++	 * its drivers matched (no sunxi-mmc node it recognises), so the eMMC
++	 * never probed and `rootwait` hung forever with no diagnostic.
++	 *
++	 * Honour an explicitly supplied FDT address (argv[2], the third bootm
++	 * argument) when one is given, exactly as the generic non-sunxi path
++	 * below does, and fall back to the control FDT otherwise. U-Boot keeps
++	 * using the vendor control FDT for its own drivers either way --
++	 * gd->fdt_blob is not touched here -- so the existing vendor boot flow
++	 * is unaffected.
++	 */
++	if (argc > 2) {
++		ret = boot_get_fdt(flag, argc, argv, IH_ARCH_DEFAULT, &images,
++				   &images.ft_addr, &images.ft_len);
++		if (ret) {
++			puts("Could not find a valid device tree\n");
++			return 1;
++		}
++	} else {
++		images.ft_addr = (char *)gd->fdt_blob;
++		images.ft_len  = gd->fdt_size;
++	}
+ 	set_working_fdt_addr((ulong)images.ft_addr);
+ 
+ 	/* set this env variable for  function boot_relocate_fdt.

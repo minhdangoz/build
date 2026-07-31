@@ -24,7 +24,15 @@
 # `bootm`, the same mechanism the working vendor 5.4 image already uses.
 # tx68-build-phoenix-image.sh wraps armbian's raw /boot/Image into
 # /boot/uImage with mkimage before packaging; this script loads that.
-setenv kernel_addr_r "0x41000000"
+# kernel_addr_r is the uImage HEADER address, deliberately 0x40 below the
+# 2MiB-aligned 0x41000000 that the header declares as load/entry. That puts
+# the payload (after the 64-byte header) exactly at its load address, so
+# bootm takes the IH_COMP_NONE "XIP" path (common/bootm.c image_decomp:
+# `if (load == image_start) break;`) and skips the memmove whose size check
+# tripped "Image too large: increase CONFIG_SYS_BOOTM_LEN" on real hardware
+# -- sun50iw9p1.h caps CONFIG_SYS_BOOTM_LEN at 0x2000000 (32 MiB), and the
+# mainline kernel is 38.3 MiB. No U-Boot rebuild needed this way.
+setenv kernel_addr_r "0x40ffffc0"
 setenv fdt_addr_r "0x46000000"
 setenv ramdisk_addr_r "0x46400000"
 
@@ -44,17 +52,34 @@ if test -e ${devtype} ${devnum} ${prefix}orangepiEnv.txt; then
 fi
 
 if test "${console}" = "display" || test "${console}" = "both"; then
-	setenv consoleargs "console=ttyS0,115200 console=tty1"
+	# Linux picks the *last* valid console= entry as the one /dev/console
+	# actually opens (used by /init, getty, systemd, ...); every console=
+	# still gets kernel printk output, but only the last one is what
+	# userspace's own stdout/stdin binds to. With tty1 listed last, the
+	# entire userspace side of boot (initramfs's own /init included) was
+	# writing to the HDMI framebuffer console -- which never showed
+	# anything (no working display driver/monitor sync yet) -- while we
+	# only ever watched ttyS0, which only ever carries the kernel's own
+	# printk lines. That looked exactly like a boot hang (kernel messages
+	# stop, nothing else ever appears) even on a fully successful boot.
+	# List ttyS0 last so /dev/console is the serial port we can actually see.
+	setenv consoleargs "earlycon=uart8250,mmio32,0x05000000 console=tty1 console=ttyS0,115200 keep_bootcon"
 fi
 if test "${console}" = "serial"; then
-	setenv consoleargs "console=ttyS0,115200"
+	setenv consoleargs "earlycon=uart8250,mmio32,0x05000000 console=ttyS0,115200 keep_bootcon"
 fi
 
 if test "${devtype}" = "mmc"; then
 	part uuid ${devtype} ${devnum}:1 partuuid
 fi
 
-setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} consoleblank=0 loglevel=${verbosity} ubootpart=${partuuid} ${extraargs} ${extraboardargs}"
+# Visible-on-purpose marker, bumped by hand whenever this boot script or the
+# initrd packaging changes in a way worth telling apart at a glance in the
+# "Kernel command line" log line -- cheaper than comparing SHA-256/filenames
+# across a long debugging session with many near-identical image builds.
+setenv tx68_bootscript_ver "6-heartbeat"
+
+setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} consoleblank=0 loglevel=${verbosity} ubootpart=${partuuid} tx68_bootscript_ver=${tx68_bootscript_ver} ${extraargs} ${extraboardargs}"
 if test "${docker_optimizations}" = "on"; then
 	setenv bootargs "${bootargs} cgroup_enable=memory swapaccount=1"
 fi
@@ -62,5 +87,25 @@ fi
 load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/allwinner/sun50i-h616-tx68.dtb
 load ${devtype} ${devnum} ${ramdisk_addr_r} ${prefix}uInitrd
 load ${devtype} ${devnum} ${kernel_addr_r} ${prefix}uImage
+
+# Real hardware: kernel booted clean, but "Initramfs unpacking failed: invalid
+# magic at start of compressed archive". Verified offline (extracted the raw
+# initrd.img from the rootfs, re-ran the exact mkimage wrap the packaging
+# script uses, gzip -t + byte-compare against the original payload) that the
+# uInitrd file itself is not corrupt. The corruption happens on-device during
+# `bootm`'s own ramdisk relocation: the log shows
+#   "Loading Ramdisk to 48c43000, end 49ffffdd ... OK"
+# i.e. bootm copied the ramdisk from ramdisk_addr_r up into
+# 0x48c43000-0x49ffffdd -- squarely inside 0x48000000-0x48ffffff, which the
+# kernel's own DT reserves as "non-reusable bl31" secure-monitor memory (see
+# the "OF: reserved mem" line right after "Machine model" in the same log).
+# U-Boot's LMB accounting only knows about *its own* embedded FDT/text/stack,
+# not the kernel's BL31 reservation, so boot_ramdisk_high() (common/image.c)
+# happily relocates straight into BL31's memory -- overwritten/scrubbed by
+# the secure monitor before the kernel ever unpacks it. Setting initrd_high
+# to the max u32 tells boot_ramdisk_high() to skip the relocation entirely
+# (initrd_copy_to_ram = 0) and use ramdisk_addr_r exactly as loaded, which is
+# already a safe, non-overlapping address.
+setenv initrd_high "0xffffffff"
 
 bootm ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}

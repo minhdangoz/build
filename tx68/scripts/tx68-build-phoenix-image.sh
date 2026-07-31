@@ -319,6 +319,64 @@ if debugfs -R "stat /boot/Image" "${rootfs_raw}" 2>/dev/null | grep -q "Inode:";
 		fd37) initrd_comp=lzma ;;
 		*) echo "ERROR: unrecognized initrd compression magic 0x${initrd_magic}" >&2; exit 1 ;;
 	esac
+
+	if [[ -n "${TX68_INITRD_HEARTBEAT:-}" ]]; then
+		# The board has repeatedly looked "hung" right after kernel boot with
+		# zero further output, on multiple unrelated theories (console
+		# routing, MMC_BLOCK, rootfs size) that all turned out not to change
+		# where the log stops. That symmetry is itself suspicious: a real
+		# hang moving with none of those changes suggests the log is being
+		# cut by an impatient wait, not a genuine freeze. writing to
+		# /dev/kmsg (not /dev/console) lands in the kernel printk ring
+		# buffer, which every registered console= gets -- so this heartbeat
+		# is visible on ttyS0 regardless of whatever /dev/console currently
+		# resolves to. If the heartbeat stops, that timestamp is the real
+		# freeze point; if it keeps going, the board was never stuck.
+		echo "Injecting a /dev/kmsg heartbeat into initramfs for boot-hang diagnosis"
+		initrd_unpack_dir="${work_dir}/initrd-unpack"
+		mkdir -p "${initrd_unpack_dir}"
+		case "${initrd_comp}" in
+			gzip) gzip -dc "${raw_initrd}" > "${work_dir}/initrd.cpio" ;;
+			zstd) zstd -dc "${raw_initrd}" > "${work_dir}/initrd.cpio" ;;
+			lzma) unlzma -c "${raw_initrd}" > "${work_dir}/initrd.cpio" ;;
+		esac
+		( cd "${initrd_unpack_dir}" && cpio -idm < "${work_dir}/initrd.cpio" >/dev/null 2>&1 )
+		cat > "${initrd_unpack_dir}/scripts/init-top/00-tx68-heartbeat" <<'HEARTBEAT_EOF'
+#!/bin/sh
+echo "TX68-HEARTBEAT: initramfs init-top reached, build=${BUILD_STAMP:-unknown}" > /dev/kmsg
+(
+	i=0
+	while true; do
+		echo "TX68-HEARTBEAT: t+${i}s (pid $$) initramfs still alive" > /dev/kmsg
+		i=$((i + 3))
+		sleep 3
+	done
+) &
+HEARTBEAT_EOF
+		chmod 755 "${initrd_unpack_dir}/scripts/init-top/00-tx68-heartbeat"
+		sed -i "1i /scripts/init-top/00-tx68-heartbeat \"\$@\"" \
+			"${initrd_unpack_dir}/scripts/init-top/ORDER"
+		# Host-side proof the injection actually landed in THIS build, not just
+		# in some earlier local reproduction -- the packaging script silently
+		# swallows cpio errors on both unpack and repack below (2>&1 >/dev/null,
+		# 2>/dev/null) so a partial failure there would otherwise go unnoticed.
+		[[ -x "${initrd_unpack_dir}/scripts/init-top/00-tx68-heartbeat" ]] ||
+			{ echo "ERROR: heartbeat script missing/not executable after injection" >&2; exit 1; }
+		head -1 "${initrd_unpack_dir}/scripts/init-top/ORDER" | grep -qF '00-tx68-heartbeat' ||
+			{ echo "ERROR: ORDER does not have the heartbeat script as its first line" >&2; exit 1; }
+		echo "Confirmed: 00-tx68-heartbeat is executable and first in init-top/ORDER"
+		( cd "${initrd_unpack_dir}" && find . | cpio -o -H newc 2>/dev/null > "${work_dir}/initrd-new.cpio" )
+		cpio -it < "${work_dir}/initrd-new.cpio" 2>/dev/null | grep -qF 'init-top/00-tx68-heartbeat' ||
+			{ echo "ERROR: repacked cpio does not contain the heartbeat script" >&2; exit 1; }
+		echo "Confirmed: repacked initrd cpio contains init-top/00-tx68-heartbeat"
+		case "${initrd_comp}" in
+			gzip) gzip -c "${work_dir}/initrd-new.cpio" > "${raw_initrd}" ;;
+			zstd) zstd -c "${work_dir}/initrd-new.cpio" > "${raw_initrd}" ;;
+			lzma) lzma -c "${work_dir}/initrd-new.cpio" > "${raw_initrd}" ;;
+		esac
+		rm -rf "${initrd_unpack_dir}" "${work_dir}/initrd.cpio" "${work_dir}/initrd-new.cpio"
+	fi
+
 	mkimage -A arm -O linux -T ramdisk -C "${initrd_comp}" \
 		-a 0 -e 0 -n uInitrd \
 		-d "${raw_initrd}" "${wrapped_initrd}" >/dev/null
@@ -389,15 +447,31 @@ echo "Validating embedded FEL/FES boot chain and rootfs"
 	"${TOOLS}/mod_update/parser_img" \
 		"$(basename "${generated_image}")" "parsed-toc1.fex" \
 		"12345678" "TOC1_00000000000" >/dev/null
-	"${TOOLS}/mod_update/parser_img" \
-		"$(basename "${generated_image}")" "parsed-rootfs.fex" \
-		"RFSFAT16" "ROOTFS_FEX000000" >/dev/null
 	cmp fes1.fex parsed-fes1.fex
 	cmp u-boot.fex parsed-fes2-uboot.fex
 	cmp boot0_sdcard.fex parsed-boot0.fex
 	cmp boot_package.fex parsed-boot-package.fex
 	cmp toc1.fex parsed-toc1.fex
-	cmp rootfs.fex parsed-rootfs.fex
+	# parser_img (vendor pctools binary, no source available) fails outright
+	# -- nonzero exit, not just truncated output -- extracting any partition
+	# at/above 4 GiB inside the IMAGEWTY container: confirmed on a 4.63 GiB
+	# rootfs.fex, almost certainly a 32-bit size field inside that
+	# closed-source tool, unrelated to U-Boot or the board itself. Skip the
+	# call entirely above that size rather than letting `set -e` abort the
+	# whole script on its failure. This re-validation is a belt-and-suspenders
+	# check on top of the img2simg/simg2img round trip already verified
+	# earlier against rootfs.raw (before IMAGEWTY packing), so a >=4 GiB
+	# rootfs.fex only loses this second confirmation, not the actual content
+	# check.
+	rootfs_fex_size="$(stat -c %s rootfs.fex)"
+	if (( rootfs_fex_size >= 4294967296 )); then
+		echo "WARNING: rootfs.fex is ${rootfs_fex_size} bytes (>= 4 GiB) -- skipping parser_img re-validation, known 4 GiB limit in that tool. Real-device flashing behavior above 4 GiB is UNCONFIRMED." >&2
+	else
+		"${TOOLS}/mod_update/parser_img" \
+			"$(basename "${generated_image}")" "parsed-rootfs.fex" \
+			"RFSFAT16" "ROOTFS_FEX000000" >/dev/null
+		cmp rootfs.fex parsed-rootfs.fex
+	fi
 )
 
 mv "${generated_image}" "${OUTPUT_IMAGE}"

@@ -1,0 +1,70 @@
+From: TX68 Build <tx68@local>
+Subject: [PATCH] tx68: give an externally loaded FDT room before fixups
+
+With 0002 in place U-Boot finally boots with the DTB the boot script loaded
+("Booting using the fdt blob at 0x46000000"), but then dies immediately:
+
+    WARNING: could not set bootargs FDT_ERR_NOSPACE.
+    ERROR: /chosen node create failed
+     - must RESET the board to recover.
+
+image_setup_libfdt() calls fdt_chosen() to add /chosen bootargs and the initrd
+range. Allwinner's tree skips the fdt_shrink_to_minimum() call (guarded by
+#ifndef CONFIG_ARCH_SUNXI) that normally page-aligns totalsize upward and thus
+creates the slack those fixups need -- their control FDT always lives in a
+pre-padded CONFIG_SUNXI_FDT_ADDR region, so it never needed it.
+
+A DTB loaded from disk is exactly its file size (44077 bytes here) with zero
+spare room, so fdt_chosen() fails. The existing shrink call cannot help even if
+re-enabled: it runs *after* fdt_chosen(), not before.
+
+Grow an externally supplied blob at the very top of image_setup_libfdt, before
+any fixup touches it. gd->fdt_blob (the vendor control FDT) is compared by
+pointer and left on the original path, so the vendor 5.4 boot flow is unchanged.
+---
+--- a/common/image-fdt.c
++++ b/common/image-fdt.c
+@@ -469,6 +469,43 @@
+ 	int ret = -EPERM;
+ 	int fdt_ret;
+ 
++#ifdef CONFIG_ARCH_SUNXI
++	/*
++	 * Allwinner skips the fdt_shrink_to_minimum() call further down (see the
++	 * CONFIG_ARCH_SUNXI guard below) because their control FDT always lives
++	 * in a pre-padded CONFIG_SUNXI_FDT_ADDR region, so it already has room
++	 * to grow. A DTB loaded from disk by a boot script has no such slack --
++	 * it is exactly its file size -- and fdt_chosen() below then fails with
++	 * FDT_ERR_NOSPACE the moment it tries to add /chosen bootargs, hanging
++	 * the board before Linux is ever entered ("could not set bootargs
++	 * FDT_ERR_NOSPACE" / "/chosen node create failed").
++	 *
++	 * Note the shrink call further down cannot fix this: it runs *after*
++	 * fdt_chosen(). Grow an externally supplied blob here instead, before
++	 * any fixup touches it. gd->fdt_blob (the vendor control FDT) is left
++	 * exactly as before.
++	 */
++	if (blob != gd->fdt_blob) {
++		ret = fdt_open_into(blob, blob, of_size + 0x3000);
++		if (ret < 0) {
++			printf("ERROR: failed to grow fdt: %s\n",
++			       fdt_strerror(ret));
++			goto err;
++		}
++		/*
++		 * of_size must follow the blob, otherwise the
++		 * "of_size += FDT_RAMDISK_OVERHEAD; fdt_set_totalsize()" below
++		 * would force totalsize back down to the original file size --
++		 * which by then is *smaller* than the content, because
++		 * fdt_chosen() has already appended /chosen and the bootargs
++		 * string. That silently truncates the blob we hand to Linux.
++		 * The generic path keeps of_size in sync via the return value
++		 * of fdt_shrink_to_minimum(); do the equivalent here.
++		 */
++		of_size = fdt_totalsize(blob);
++	}
++#endif
++
+ 	if (fdt_root(blob) < 0) {
+ 		printf("ERROR: root node setup failed\n");
+ 		goto err;
