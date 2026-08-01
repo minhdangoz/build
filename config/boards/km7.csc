@@ -38,6 +38,7 @@ declare -g CONSOLE_AUTOLOGIN="yes"
 PACKAGE_LIST_BOARD="net-tools"
 
 enable_extension "wayland-sessions-mask"
+enable_extension "km7-amlogic-burn"
 
 # Family configuration is sourced after this file, so append board-only patch
 # sets here. The common-drivers patches use paths prefixed with common_drivers/

@@ -171,6 +171,19 @@ do_expand_partition()
 		# that one partition and leaves the rest of the table untouched.
 		echo -e "\nResizing GPT partition ${partindex} with sfdisk:"
 		echo ", +" | sfdisk --no-reread -N ${partindex} $diskdev
+
+		# `partprobe` below calls BLKRRPART, which the kernel refuses for a
+		# disk with a mounted partition on it -- always true here, this IS
+		# the running root disk. That silent refusal made the generic
+		# partsize-vs-actualsize check further down see the *old* (still
+		# unmounted-partition-table) size and wrongly conclude a reboot was
+		# needed, even though the resize had already fully succeeded.
+		# Confirmed on real hardware: after this exact sequence, `df -h /`
+		# already showed the full grown size with zero reboot. `partx -u`
+		# uses BLKPG per-partition updates instead, which the kernel does
+		# allow live on a mounted partition (it's how cloud-init's growpart
+		# updates a mounted root disk too).
+		partx -u --nr ${partindex} ${diskdev}
 	else
 		echo -e "\nExecuting fdisk:"
 		local partnum=$(parted $diskdev unit s print -sm | awk 'END{print NR-2}')
@@ -336,6 +349,22 @@ main()
 	fi
 
 	do_expand_filesystem "$rootdev" "/"
+
+	# TX68 has no console attached most of the time (TV box, HDMI-only) and
+	# the interactive armbian-firstlogin wizard that would normally print
+	# "please reboot now" is intentionally skipped for this board (see
+	# post_family_tweaks__tx68 in config/boards/tx68.conf) -- there is no
+	# session left to show that message to. If the partx fix above didn't
+	# cover every case (e.g. do_expand_filesystem's own fssize/devsize
+	# check below 90%) and the flag is still set, just reboot: this runs
+	# as a systemd service at early boot, before the desktop session
+	# starts, so nothing is lost by rebooting here instead of waiting for
+	# a human to notice.
+	if [[ ${BOARD} == tx68 && -f /var/run/resize2fs-reboot ]]; then
+		echo -e "\n### [resize2fs] Rebooting automatically to finish the resize (no console to prompt on this board)"
+		systemctl reboot
+		exit 0
+	fi
 
 	# disable itself
 	[[ ! -f /var/run/resize2fs-reboot ]] && systemctl disable armbian-resize-filesystem

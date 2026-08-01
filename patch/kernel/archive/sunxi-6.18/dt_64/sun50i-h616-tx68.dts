@@ -109,6 +109,25 @@
 		bt_hostwake = <&pio 6 16 GPIO_ACTIVE_HIGH>; /* PG16 */
 		status = "okay";
 	};
+
+	/*
+	 * Front-panel 4-digit clock display. Out-of-tree driver
+	 * (drivers/vfd/fd650.c, ported from the vendor Android BSP's
+	 * drivers/vfd) matches on this custom compatible via its own
+	 * of_match_table -- not a mainline binding. Property names
+	 * (fd650_gpio_clk/fd650_gpio_dat) are exactly what the vendor
+	 * DT and the driver's of_get_named_gpio() calls use; renaming
+	 * them here would silently break the probe. Verified against
+	 * vendor board.dts (m1k_go): PI11 = clock, PI12 = data,
+	 * bit-banged two-wire protocol, no pinctrl group needed since
+	 * the driver drives both lines as plain GPIOs.
+	 */
+	fd650: fd650 {
+		compatible = "oranth,fd650";
+		fd650_gpio_clk = <&pio 8 11 GPIO_ACTIVE_HIGH>; /* PI11 */
+		fd650_gpio_dat = <&pio 8 12 GPIO_ACTIVE_HIGH>; /* PI12 */
+		status = "okay";
+	};
 };
 
 /*

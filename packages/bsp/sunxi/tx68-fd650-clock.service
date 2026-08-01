@@ -1,0 +1,14 @@
+[Unit]
+Description=TX68 FD650 front-panel clock
+After=systemd-udev-settle.service
+ConditionPathExists=/dev/fd650_dev
+
+[Service]
+Type=simple
+Environment=TX68_FD650_BRIGHTNESS=3
+ExecStart=/usr/local/bin/tx68-fd650-clock
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,24 @@
+#!/bin/bash
+
+set -euo pipefail
+
+readonly FD650_DEVICE="/dev/fd650_dev"
+readonly FD650_BRIGHTNESS="${TX68_FD650_BRIGHTNESS:-3}"
+
+if [[ ! ${FD650_BRIGHTNESS} =~ ^[1-8]$ ]]; then
+	echo "Invalid TX68_FD650_BRIGHTNESS: ${FD650_BRIGHTNESS}" >&2
+	exit 1
+fi
+
+while true; do
+	now="$(date +%H%M%S)"
+	if ((10#${now:4:2} % 2)); then
+		dot="001"
+	else
+		dot="000"
+	fi
+	brightness="$(printf '%03o' "${FD650_BRIGHTNESS}")"
+	# One printf is intentional: the driver expects all six bytes in one write.
+	printf "%s\\${dot}\\${brightness}" "${now:0:4}"
+	sleep 1
+done >"${FD650_DEVICE}"

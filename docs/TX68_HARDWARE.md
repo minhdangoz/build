@@ -520,10 +520,50 @@ sai mức.
 | PC | aldo1 1.8 V | 📄 `[gpio_bias] pc_bias = 1800` |
 | PG | aldo1 1.8 V | 📄 `vcc-pg-supply = <&reg_pio1_8>` |
 | PH | dldo1 3.3 V | ✅ console UART0 PH0/PH1 chạy |
-| PI | dldo1 3.3 V | ❓ chưa dùng chân PI nào |
+| PI | dldo1 3.3 V | ✅ PI11/PI12 chạy FD650 (§11.2) |
 | SPI0 / SPI1 | vendor **tắt** cả hai | 📄 |
 | TWI0–TWI4 | vendor **tắt** hết | 📄 |
 | Standby | `standby_mode = 1` | 📄 |
+
+### 11.2 FD650 — màn hình 4 số mặt trước ✅
+
+| Hạng mục | Giá trị | Nguồn |
+|---|---|---|
+| Compatible | `oranth,fd650` (custom, không phải mainline binding) | 📄 vendor `board.dts` |
+| Clock | **PI11** (`fd650_gpio_clk`) | ✅ vendor `board.dts` dòng 818, xác nhận trên máy thật |
+| Data | **PI12** (`fd650_gpio_dat`) | ✅ vendor `board.dts` dòng 819, xác nhận trên máy thật |
+| Giao thức | Bit-bang 2 dây tự chế (không phải I2C/SPI chuẩn), driver toàn quyền điều khiển trực tiếp GPIO | ✅ đọc source driver |
+| Driver | `drivers/vfd/fd650.c`, port từ Android BSP (`hardware`/hạt nhân vendor), KHÔNG có trong cây mainline hay cây orangepi-build gốc | patch `patch/kernel/archive/sunxi-6.18/patches.armbian/drv-vfd-add-fd650.patch` |
+| Node char device | `/dev/fd650_dev` (misc device), ghi 6 byte 1 lần: 4 ký tự hiển thị + `dot_fg` + `brightness` | ✅ test viết "1234" hiện đúng trên máy thật |
+| Service đồng hồ | `tx68-fd650-clock.service` chạy `/usr/local/bin/tx68-fd650-clock`, ghi HH:MM + nháy dấu hai chấm mỗi giây | ✅ chạy ổn định trên máy thật, không crash/restart-loop |
+
+> 📌 **Ba chỗ không tương thích kernel 6.18 phải sửa khi port từ bản vendor
+> 5.4** (tham khảo `/media/jimmy/WORK/AOSP/orangepi-build/external/patch/kernel/sun50iw9-current/board_tx68/0002-tx68-add-fd650-front-display-driver.patch`,
+> viết cho kernel Android 5.4 nên dùng API cũ):
+> 1. `platform_driver.remove` phải trả **`void`**, không phải `int` — chữ ký
+>    đổi từ kernel 6.11 trở lên.
+> 2. `of_get_named_gpio_flags()` không còn tồn tại — dùng
+>    `of_get_named_gpio()` (bỏ tham số flags cuối).
+> 3. `get_seconds()` bị xoá từ lâu (~4.20) — dùng `ktime_get_seconds()`.
+> 4. `__gpio_get_value()` không còn — dùng `gpio_get_value()`.
+>
+> Không cái nào đoán được nếu không thử build thật — trình biên dịch báo lỗi
+> ngay, không phải lỗi runtime im lặng.
+>
+> ⚠️ **Phải dùng đúng compiler đã build kernel đang chạy trên máy** (kiểm tra
+> `CONFIG_CC_VERSION_TEXT` trong `.config` của kernel worktree, ví dụ
+> gcc 13.3.0 Ubuntu 24.04/noble) — kernel này bật
+> `-ftrivial-auto-var-init=zero`, flag chỉ gcc ≥ 12 mới hiểu. gcc cross-compiler
+> cài sẵn trên máy build host có thể là bản khác (vd. 11.4.0) và sẽ báo lỗi
+> "unrecognized command-line option" ngay ở bước biên dịch đầu tiên. Dùng
+> image Docker `ghcr.io/armbian/docker-armbian-build:armbian-ubuntu-noble-latest`
+> để có đúng gcc-13.
+>
+> Không cần `CONFIG_MODVERSIONS`/`CONFIG_MODULE_SIG`/`CONFIG_RANDSTRUCT` trong
+> build này (đều tắt), nên build module `.ko` ngoài cây (`make M=...`) và nạp
+> vào kernel đang chạy trên máy thật là an toàn — không cần build lại cả
+> kernel Image để thử nghiệm nhanh, miễn `vermagic` (chuỗi release) khớp
+> `uname -r`.
 
 ---
 
@@ -574,12 +614,13 @@ này gặp hỏng bộ nhớ ngẫu nhiên, hãy quay lại chỗ này trước 
 
 | Hạng mục | Trạng thái |
 |---|---|
-| Ethernet AC300 | ✅ PHY lên, `end0` xuất hiện — chưa test lưu lượng thật |
+| Ethernet AC300 | ✅ PHY lên, `end0` xuất hiện, **đã test traffic thật** (SSH qua chính `end0`, 100Mbps/Full) |
 | WiFi | ✅ **hoạt động** — scan, associate, ra IP. Chip thật AIC8801, xem §8 |
-| Bluetooth | ✅ **hoạt động** — `hci0` lên, HCI trả lời. Cần node `bt-lpm` + tắt driver marlin, xem §8 |
+| Bluetooth | ❌ **KHÔNG hoạt động trên image đang chạy trên board thật** — driver `marlin` (UNISOC WCN builtin) vẫn chiếm GPIO PG16 lúc boot, `CONFIG_WCN_BSP_DRIVER_BUILDIN`/`CONFIG_UNISOC_WIFI_PS` đã tắt đúng trong `config/kernel/linux-sunxi64-current.config` của repo nhưng board đang chạy kernel build từ **trước** khi fix này được thêm. Cần build lại kernel + reflash. Xem §8 |
 | X11 mặc định | ✅ GDM ép Xorg (`WaylandEnable=false`) qua `post_family_tweaks__tx68` |
-| Console/desktop full auto-login | ✅ `DESKTOP_AUTOLOGIN` + `CONSOLE_AUTOLOGIN` đều `"yes"` trong `config/boards/tx68.conf` |
-| eMMC tự expand rootfs | ✅ vá `armbian-resize-filesystem` (nhánh `BOARD == tx68`), port từ orangepi-build |
+| Console/desktop full auto-login | ✅ đã sửa root cause: `armbian-firstlogin` (wizard first-login) **tự xoá** override autologin của `CONSOLE_AUTOLOGIN` ngay khi chạy — đây là cơ chế one-shot upstream, không phải bug DTS/config. Từ giờ board bỏ hẳn wizard: user `tx68`/mật khẩu `tx68` được tạo sẵn lúc build (`post_family_tweaks__tx68`), root cũng đặt `tx68` (`ROOTPWD` trong `tx68.conf`), GDM autologin thẳng vào `tx68` — không còn màn hình `tx68 login:` nào nữa |
+| eMMC tự expand rootfs | ✅ đã sửa root cause: nhánh `BOARD == tx68` dùng `partprobe` (bị kernel từ chối re-read bảng phân vùng khi đang mount root) rồi so sai kích thước → tự gắn cờ "cần reboot" dù đã resize xong. Đổi sang `partx -u` (như `growpart`) để cập nhật kernel view ngay lúc đang mount — không cần reboot nữa. Có thêm `systemctl reboot` tự động dự phòng nếu cờ vẫn bị set vì lý do khác, vì box này không có ai ngồi trước màn hình để bấm gì |
+| FD650 (màn hình 4 số mặt trước) | ✅ **hoạt động** — `/dev/fd650_dev` lên, test ghi "1234" hiện đúng, service đồng hồ chạy ổn định. Xem §11.2 |
 | USB0 host/OTG toggle | ❌ không có runtime toggle, biên dịch cứng trong DTB — xem §11 |
 | Khe thẻ SD | ❓ chưa rõ có tồn tại vật lý |
 | CVBS (`tv0`) | ❓ chưa thử |

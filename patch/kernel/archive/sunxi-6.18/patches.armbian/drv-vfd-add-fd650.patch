@@ -1,0 +1,1424 @@
+diff -ruN a/drivers/Kconfig b/drivers/Kconfig
+--- a/drivers/Kconfig	2026-08-01 18:20:42.444143825 +0700
++++ b/drivers/Kconfig	2026-08-01 18:20:55.978943717 +0700
+@@ -251,4 +251,6 @@
+-
++
+source "drivers/cdx/Kconfig"
+-
++
++source "drivers/vfd/Kconfig"
++
+ endmenu
+diff -ruN a/drivers/Makefile b/drivers/Makefile
+--- a/drivers/Makefile	2026-08-01 18:20:42.446143944 +0700
++++ b/drivers/Makefile	2026-08-01 18:20:55.980943835 +0700
+@@ -197,3 +197,5 @@
+-
++
+obj-$(CONFIG_DIBS)		+= dibs/
+ obj-$(CONFIG_S390)		+= s390/
++
++obj-$(CONFIG_VFD)		+= vfd/
+diff -ruN a/drivers/vfd/fd650.c b/drivers/vfd/fd650.c
+--- a/drivers/vfd/fd650.c	1970-01-01 08:00:00.000000000 +0800
++++ b/drivers/vfd/fd650.c	2026-08-01 18:21:06.088540698 +0700
+@@ -0,0 +1,1045 @@
++/*
++ * drivers/vfd/fd650.c
++ *
++ * FD650 Driver
++ *
++ * Copyright (C) 2015 Fdhisi, Inc.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ */
++
++#include <linux/module.h>
++#include <linux/init.h>
++#include <linux/types.h>
++#include <linux/kernel.h>
++#include <linux/delay.h>
++#include <linux/platform_device.h>
++#include <linux/errno.h>
++#include <linux/string.h>
++#include <linux/ioctl.h>
++#include <linux/device.h>
++#include <linux/errno.h>
++#include <linux/mutex.h>
++#include <linux/miscdevice.h>
++#include <linux/fs.h>
++#include <linux/fcntl.h>
++#include <linux/poll.h>
++#include <linux/time.h>
++#include <linux/cdev.h>
++#include <linux/sched.h>
++#include <linux/gpio.h>
++#include <linux/of_gpio.h>
++#include <linux/leds.h>
++#include <linux/timekeeping.h>
++#include "fd650.h"
++
++
++#define PINS_PER_BANK       32
++
++static int _fd650_suspend(void);
++static int _fd650_resume(void);
++
++#ifdef CONFIG_HAS_EARLYSUSPEND
++#include <linux/earlysuspend.h>
++
++static struct early_suspend fd650_early_suspend;
++static void fd650_suspend(struct early_suspend *h);
++static void fd650_resume(struct early_suspend *h);
++#endif
++
++static fd650_data_t *pdata = NULL;
++struct kp {
++	struct led_classdev cdev;
++	unsigned int state;
++};
++static struct kp *kp;
++
++
++static int gpio_data_set(unsigned int gpio, int data)
++{
++	gpio_direction_output(gpio, data);
++	//__gpio_set_value(gpio, data);
++
++	return 0;
++}
++
++static int gpio_data_get(unsigned int gpio)
++{
++	return gpio_get_value(gpio);
++}
++
++static void FD650_Mcu_Start(fd650_dev_t *dev)
++{
++	gpio_data_set(dev->dat_pin, 1);
++    gpio_data_set(dev->clk_pin, 1);
++	DELAY;
++	gpio_data_set(dev->dat_pin, 0);
++	DELAY;
++	gpio_data_set(dev->clk_pin, 0);
++}
++
++static void FD650_Mcu_Stop(fd650_dev_t *dev)
++{
++	gpio_data_set(dev->dat_pin, 0);
++	DELAY;
++	gpio_data_set(dev->clk_pin, 1);
++	DELAY;
++	gpio_data_set(dev->dat_pin, 1);
++	DELAY;
++
++	gpio_direction_input(dev->dat_pin);
++}
++
++static void FD650_Mcu_WrByte(uint8 dat, fd650_dev_t *dev)
++{
++	uint8 i;
++
++	for (i = 0; i != 8; i++) {
++		if (dat & 0x80) {
++			gpio_data_set(dev->dat_pin, 1);
++		} else {
++			gpio_data_set(dev->dat_pin, 0);
++		}
++
++		DELAY;
++		gpio_data_set(dev->clk_pin, 1);
++		dat <<= 1;
++		DELAY;  // 可选延时
++		gpio_data_set(dev->clk_pin, 0);
++	}
++
++	gpio_data_set(dev->dat_pin, 1);
++	gpio_direction_input(dev->dat_pin);
++	DELAY;
++	gpio_data_set(dev->clk_pin, 1);
++	DELAY;
++	gpio_data_set(dev->clk_pin, 0);
++}
++
++static uint8 FD650_Mcu_RdByte(fd650_dev_t *dev)
++{
++	uint8 dat, i;
++	dat = 0;
++
++	gpio_data_set(dev->dat_pin, 1);
++	gpio_direction_input(dev->dat_pin);
++
++	for (i = 0; i != 8; i++) {
++		DELAY;  // 可选延时
++		gpio_data_set(dev->clk_pin, 1);
++		DELAY;  // 可选延时
++
++		dat <<= 1;
++		if (gpio_data_get(dev->dat_pin))
++			dat++;
++
++		gpio_data_set(dev->clk_pin, 0);
++	}
++
++	gpio_data_set(dev->dat_pin, 1);
++	DELAY;
++	gpio_data_set(dev->clk_pin, 1);
++	DELAY;
++	gpio_data_set(dev->clk_pin, 0);
++
++	return dat;
++}
++
++void FD650_Mcu_Write(uint16 cmd, fd650_dev_t *dev)
++{
++	uint8 value = 0;
++
++	value = (uint8)(cmd >> 7) & 0x3E;
++	value|= 0x40;
++
++	FD650_Mcu_Start(dev);
++	FD650_Mcu_WrByte(value, dev);
++	FD650_Mcu_WrByte((uint8)cmd, dev);
++	FD650_Mcu_Stop(dev);
++}
++
++uint8 FD650_Mcu_Read(fd650_dev_t *dev)
++{
++	uint8 keycode = 0;
++	uint8 value = 0;
++
++	value = (uint8)(FD650_GET_KEY >> 7) & 0x3E;
++	value |= 0x41;
++
++	FD650_Mcu_Start(dev);
++	FD650_Mcu_WrByte(value, dev);
++	keycode=FD650_Mcu_RdByte(dev);
++	FD650_Mcu_Stop(dev);
++
++	if ((keycode & 0x00000040) == 0)
++		keycode = 0;
++
++	return keycode;
++}
++
++static uint8 Led_Get_Code(uint8 input)
++{
++	uint8 i, bitmap = 0xFF;
++
++	for (i = 0; i < LEDMAPNUM; i++)
++	{
++		if (BCD_decode_tab[i].character == input)
++		{
++			bitmap = BCD_decode_tab[i].bitmap;
++			/*
++			pr_dbg("%s:::Input char: %c, found the right bcd_code:0x%x \n",
++				__FUNCTION__, input, bitmap);
++				*/
++			break;
++		}
++	}
++
++	return bitmap;
++}
++
++static uint8 Led_Show_650(uint8 *pinput, fd650_dev_t *dev)
++{
++	uint8 i, len, abort = 0;
++	uint8 data[4] = {0};
++	uint16 value = 0;
++
++	if (pinput == NULL)
++	{
++		pr_error("%s:::acfPStr == NULL !!!\n", __FUNCTION__);
++		return -1;
++	}
++
++	len = strlen(pinput);
++
++	if (len > 4)
++		len = 4;
++	else if (len < 4)
++		return -1;
++
++	for (i = 0; i < len; i++)
++	{
++		if (pinput[i] == 0x00)
++		{
++			abort = 1;
++			break;
++		}
++		data[i] = Led_Get_Code(pinput[i]);
++		/*
++		pr_dbg("%s:::pinput[%d] == %c, data[%d] == 0x%02X\n",
++		__FUNCTION__,  i, pinput[i], i, data[i]);
++		*/
++		if (data[i] == 0xFF)
++		{
++			abort = 1;
++			break;
++		}
++	}
++
++	if (abort)
++	{
++		return -1;
++	}
++
++	//dev->brightness = 3;	// 降低亮度，默认白色数显
++	switch (dev->brightness)
++	{
++		case 1:
++			value = FD650_SYSON_1;
++			break;
++		case 2:
++			value = FD650_SYSON_2;
++			break;
++		case 3:
++			value = FD650_SYSON_3;
++			break;
++		case 4:
++			value = FD650_SYSON_4;
++			break;
++		case 5:
++			value = FD650_SYSON_5;
++			break;
++		case 6:
++			value = FD650_SYSON_6;
++			break;
++		case 7:
++			value = FD650_SYSON_7;
++			break;
++		case 8:
++			value = FD650_SYSON_8;
++			break;
++		default:
++			value = FD650_SYSON_8;
++			break;
++	}
++
++	// 开启显示和键盘，8段显示方式
++	FD650_Mcu_Write(value, dev);
++#ifndef CONFIG_FD650_REVERT
++	//点亮第一个数码管
++	value = FD650_DIG0;
++	value |= (uint8)data[0];
++	FD650_Mcu_Write(value, dev);
++
++	//点亮第二个数码管，带冒号
++	value = FD650_DIG1;
++	value |= (uint8)data[1];
++	if(dev->dot_fg == 0x00)
++	{
++		value &= ~SEG_H;
++	}
++	else
++	{
++		value |= SEG_H;
++	}
++	FD650_Mcu_Write(value, dev);
++
++	// 点亮第三个数码管
++	value = FD650_DIG2;
++	value |= (uint8)data[2];
++	FD650_Mcu_Write(value, dev);
++
++	//点亮第四个数码管
++	value = FD650_DIG3;
++	value |= (uint8)data[3];
++	FD650_Mcu_Write(value, dev);
++#else
++	//点亮第一个数码管
++	value = FD650_DIG0;
++	value |= (uint8)data[3];
++	FD650_Mcu_Write(value, dev);
++
++	//点亮第二个数码管，带冒号
++	value = FD650_DIG1;
++	value |= (uint8)data[2];
++	if(dev->dot_fg == 0x00)
++	{
++		value &= ~SEG_H;
++	}
++	else
++	{
++		value |= SEG_H;
++	}
++	FD650_Mcu_Write(value, dev);
++
++	// 点亮第三个数码管
++	value = FD650_DIG2;
++	value |= (uint8)data[1];
++	FD650_Mcu_Write(value, dev);
++
++	//点亮第四个数码管
++	value = FD650_DIG3;
++	value |= (uint8)data[0];
++	FD650_Mcu_Write(value, dev);
++#endif
++
++	return 0;
++}
++
++static int fd650_dev_open(struct inode *inode, struct file *file)
++{
++    fd650_dev_t *dev = NULL;
++
++    file->private_data = pdata->dev;
++	dev = file->private_data;
++
++	pr_dbg("%s:::open fd650 dev success\n", __FUNCTION__);
++    return 0;
++}
++
++static int fd650_dev_release(struct inode *inode, struct file *file)
++{
++    //fd650_dev_t *dev = file->private_data;
++	file->private_data = NULL;
++
++	pr_dbg("%s:::close fd650 dev success\n", __FUNCTION__);
++    return 0;
++}
++
++static ssize_t
++fd650_dev_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos)
++{
++	fd650_dev_t *dev = filp->private_data;
++	int size = ((count <= sizeof(dev->wbuf)) ? count : sizeof(dev->wbuf));
++
++	return copy_to_user((void __user *)buf, dev->wbuf, size);
++}
++
++static ssize_t
++fd650_dev_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
++{
++	fd650_dev_t *dev;
++	uint32 missing;
++	int status = 0;
++
++	dev = filp->private_data;
++	if (count > 6)
++		count = 6;
++
++	if (kp->state == 0)
++		return status;
++
++	if (down_interruptible(&dev->sem)) {
++		return -1;
++	}
++
++	missing = copy_from_user(dev->wbuf, buf, count);
++	if (missing == 0) {
++		dev->dot_fg = dev->wbuf[4];
++		dev->brightness = dev->wbuf[5];
++		Led_Show_650(dev->wbuf, dev);
++		memset(dev->wbuf, 0, sizeof(dev->wbuf));
++		status = count;
++	}
++
++	up(&dev->sem);
++	return status;
++}
++
++static long
++fd650_dev_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
++{
++	int err = 0, ret = 0;
++    fd650_dev_t *dev;
++	dev = filp->private_data;
++
++	/* don't even decode wrong cmds: better returning  ENOTTY than EFAULT */
++	if (_IOC_TYPE(cmd) != FD650_IOC_MAGIC)
++		return -ENOTTY;
++	if (_IOC_NR(cmd) > FD650_IOC_MAXNR)
++		return -ENOTTY;
++
++	/*
++	 * the type is a bitmask, and VERIFY_WRITE catches R/W
++	 * transfers. Note that the type is user-oriented, while
++	 * verify_area is kernel-oriented, so the concept of "read" and
++	 * "write" is reversed
++	 */
++	if (_IOC_DIR(cmd) & _IOC_READ)
++		err = !access_ok((void __user *)arg, _IOC_SIZE(cmd));
++	else if (_IOC_DIR(cmd) & _IOC_WRITE)
++		err = !access_ok((void __user *)arg, _IOC_SIZE(cmd));
++	if (err)
++		return -EFAULT;
++
++	if (down_interruptible(&dev->sem)) {
++		return -1;
++	}
++
++	switch (cmd) {
++		case FD650_IOCTEST:
++			dev->dot_fg = 0x01;
++			Led_Show_650("8888", dev);
++			break;
++
++		case FD650_IOC_SDOT: /* Set: arg points to the value */
++			ret = __get_user(dev->dot_fg, (int __user *)arg);
++			break;
++
++		case FD650_IOC_GDOT: /* Get: arg is pointer to result */
++			ret = __put_user(dev->dot_fg, (int __user *)arg);
++			break;
++
++		case FD650_IOC_GVER:
++			ret = copy_to_user((unsigned char __user*)arg, FD650_DRIVER_VERSION, sizeof(FD650_DRIVER_VERSION));
++			break;
++
++		case FD650_IOC_SBRIGHT:
++			ret = __get_user(dev->brightness, (int __user *)arg);
++			break;
++
++		case FD650_IOC_GBRIGHT:
++			ret = __put_user(dev->brightness, (int __user *)arg);
++			break;
++
++		// **NEW: Enhanced error handling IOCTLs**
++		case FD650_IOC_SET_MODE:
++			ret = __get_user(dev->display_mode, (int __user *)arg);
++			break;
++
++		case FD650_IOC_GET_MODE:
++			ret = __put_user(dev->display_mode, (int __user *)arg);
++			break;
++
++		case FD650_IOC_SET_ERROR:
++			if (copy_from_user(dev->error_msg, (char __user *)arg, 4) == 0) {
++				dev->error_msg[4] = '\0';
++				dev->display_mode = FD650_MODE_ERROR;
++				dev->error_time = ktime_get_seconds();
++				Led_Show_650(dev->error_msg, dev);
++				pr_dbg("Error set to '%s'\n", dev->error_msg);
++			}
++			break;
++
++		case FD650_IOC_GET_ERROR:
++			ret = copy_to_user((char __user *)arg, dev->error_msg, 5);
++			break;
++
++		case FD650_IOC_CLEAR_ERROR:
++			dev->display_mode = FD650_MODE_TIME;
++			memset(dev->error_msg, 0, sizeof(dev->error_msg));
++			dev->error_priority = FD650_PRIORITY_NONE;
++			pr_dbg("Error cleared\n");
++			break;
++
++		case FD650_IOC_SET_CUSTOM:
++			if (copy_from_user(dev->custom_msg, (char __user *)arg, 4) == 0) {
++				dev->custom_msg[4] = '\0';
++				dev->display_mode = FD650_MODE_CUSTOM;
++				Led_Show_650(dev->custom_msg, dev);
++				pr_dbg("Custom message set to '%s'\n", dev->custom_msg);
++			}
++			break;
++
++		default:  /* redundant, as cmd was checked against MAXNR */
++			ret = -ENOTTY;
++			break;
++	}
++
++	up(&dev->sem);
++	return ret;
++}
++
++// Error code attribute
++static ssize_t error_code_show(struct device *dev, struct device_attribute *attr, char *buf)
++{
++    if (pdata == NULL || pdata->dev == NULL)
++        return sprintf(buf, "\n");
++
++    return sprintf(buf, "%s\n", pdata->dev->error_msg);
++}
++
++static ssize_t error_code_store(struct device *dev, struct device_attribute *attr,
++                               const char *buf, size_t size)
++{
++    char input[16];
++
++    if (pdata == NULL || pdata->dev == NULL) {
++        pr_error("Device not initialized\n");
++        return -ENODEV;
++    }
++
++    // Copy input safely
++    memset(input, 0, sizeof(input));
++    if (size > 0) {
++        strncpy(input, buf, min((int)size, 15));
++        // Remove newline if present
++        if (input[strlen(input)-1] == '\n') {
++            input[strlen(input)-1] = '\0';
++        }
++    }
++
++    if (down_interruptible(&pdata->dev->sem))
++        return -ERESTARTSYS;
++
++    pr_dbg("error_code_store: received '%s'\n", input);
++
++    if (strncmp(input, "clear", 5) == 0 || strlen(input) == 0) {
++        // Clear error
++        pdata->dev->display_mode = FD650_MODE_TIME;
++        memset(pdata->dev->error_msg, 0, sizeof(pdata->dev->error_msg));
++        pdata->dev->error_priority = FD650_PRIORITY_NONE;
++        pr_dbg("Error cleared, returning to time mode\n");
++    } else {
++        // Set error and display immediately
++        memset(pdata->dev->error_msg, 0, sizeof(pdata->dev->error_msg));
++        strncpy(pdata->dev->error_msg, input, 4);
++        pdata->dev->error_msg[4] = '\0';
++        pdata->dev->display_mode = FD650_MODE_ERROR;
++        pdata->dev->error_priority = FD650_PRIORITY_NORMAL;
++        pdata->dev->error_time = ktime_get_seconds();
++
++        // Display the error immediately
++        Led_Show_650(pdata->dev->error_msg, pdata->dev);
++        pr_dbg("Error set to '%s' and displayed\n", pdata->dev->error_msg);
++    }
++
++    up(&pdata->dev->sem);
++    return size;
++}
++
++static DEVICE_ATTR(error_code, 0664, error_code_show, error_code_store);
++
++// Display mode attribute
++static ssize_t display_mode_show(struct device *dev, struct device_attribute *attr, char *buf)
++{
++    if (pdata == NULL || pdata->dev == NULL)
++        return sprintf(buf, "-1\n");
++
++    return sprintf(buf, "%d\n", pdata->dev->display_mode);
++}
++
++static ssize_t display_mode_store(struct device *dev, struct device_attribute *attr,
++                                 const char *buf, size_t size)
++{
++    int mode;
++
++    if (pdata == NULL || pdata->dev == NULL)
++        return -ENODEV;
++
++    if (sscanf(buf, "%d", &mode) != 1)
++        return -EINVAL;
++
++    if (mode < 0 || mode > 2)
++        return -EINVAL;
++
++    if (down_interruptible(&pdata->dev->sem))
++        return -ERESTARTSYS;
++
++    pdata->dev->display_mode = mode;
++    pr_dbg("Display mode set to %d\n", mode);
++
++    up(&pdata->dev->sem);
++    return size;
++}
++
++static DEVICE_ATTR(display_mode, 0664, display_mode_show, display_mode_store);
++
++// Custom message attribute
++static ssize_t custom_msg_show(struct device *dev, struct device_attribute *attr, char *buf)
++{
++    if (pdata == NULL || pdata->dev == NULL) {
++        return sprintf(buf, "\n");
++    }
++
++    return sprintf(buf, "%s\n", pdata->dev->custom_msg);
++}
++
++static ssize_t custom_msg_store(struct device *dev, struct device_attribute *attr,
++                               const char *buf, size_t size)
++{
++    char input[16];
++
++    if (pdata == NULL || pdata->dev == NULL) {
++        return -ENODEV;
++    }
++
++    // Copy input safely
++    memset(input, 0, sizeof(input));
++    if (size > 0) {
++        strncpy(input, buf, min((int)size, 15));
++        // Remove newline if present
++        if (input[strlen(input)-1] == '\n') {
++            input[strlen(input)-1] = '\0';
++        }
++    }
++
++    if (down_interruptible(&pdata->dev->sem)) {
++        return -ERESTARTSYS;
++    }
++
++    memset(pdata->dev->custom_msg, 0, sizeof(pdata->dev->custom_msg));
++    if (strlen(input) > 0) {
++        strncpy(pdata->dev->custom_msg, input, 4);
++        pdata->dev->custom_msg[4] = '\0';
++        pdata->dev->display_mode = FD650_MODE_CUSTOM;
++        Led_Show_650(pdata->dev->custom_msg, pdata->dev);
++        pr_dbg("Custom message set to '%s'\n", pdata->dev->custom_msg);
++    } else {
++        // Empty input clears custom message
++        pdata->dev->display_mode = FD650_MODE_TIME;
++        pr_dbg("Custom message cleared\n");
++    }
++
++    up(&pdata->dev->sem);
++    return size;
++}
++
++static DEVICE_ATTR(custom_msg, 0664, custom_msg_show, custom_msg_store);
++
++// Driver version attribute
++static ssize_t version_show(struct device *dev, struct device_attribute *attr, char *buf)
++{
++    return sprintf(buf, "%s\n", FD650_DRIVER_VERSION);
++}
++
++static DEVICE_ATTR(version, 0444, version_show, NULL);
++
++static struct file_operations fd650_fops = {
++	.owner		=	THIS_MODULE,
++	.open		=	fd650_dev_open,
++	.release	=	fd650_dev_release,
++	.read       =   fd650_dev_read,
++	.write      =   fd650_dev_write,
++	.unlocked_ioctl = fd650_dev_ioctl,
++};
++
++static struct miscdevice fd650_device = {
++	.minor	= MISC_DYNAMIC_MINOR,
++	.name	= DEV_NAME,
++	.fops	= &fd650_fops,
++};
++
++static int register_fd650_driver(void)
++{
++    int ret = 0;
++
++    ret = misc_register(&fd650_device);
++	if (ret)
++		pr_error("ERROR: %s:::register fd650 driver fail !!!\n", __func__);
++	else
++		pr_dbg("NOTE: %s:::register fd650 driver success\n", __func__);
++
++	return ret;
++}
++
++static uint8 deregister_fd650_driver(void)
++{
++	misc_deregister(&fd650_device);
++
++	return 0;
++}
++
++static void
++fd628_brightness_set(struct led_classdev *cdev,	enum led_brightness brightness)
++{
++	pr_info("brightness = %d\n", brightness);
++
++	if (pdata == NULL)
++		return ;
++
++//	pdata->dev->brightness = brightness;
++//	FD628_SET_BRIGHTNESS(pdata->dev->brightness, pdata->dev, FD628_DISP_ON);
++//	pdata->dev->wbuf[8] = brightness;
++	//采用递增模式写入显示数据
++//	FD628_WrDisp_AddrINC(0x00, 2*5, pdata->dev);
++}
++
++static ssize_t
++led_light_show(struct device *dev, struct device_attribute *attr, char *buf)
++{
++	return sprintf(buf, "%s\n", pdata->dev->wbuf);
++}
++
++static ssize_t
++led_light_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t size)
++{
++	unsigned int val;
++	if (pdata == NULL)
++		return size;
++
++	if (down_interruptible(&pdata->dev->sem)) {
++		return -1;
++	}
++
++	if (!kstrtouint(buf, 16, &val) && val > 0 && val < 9) {
++	        _fd650_resume();
++
++                pdata->dev->dot_fg = 0x00;      // dot 中间冒号
++                pdata->dev->brightness = val;     // 数码管亮度
++                Led_Show_650("8888", pdata->dev);
++	}
++
++	if (strncmp(buf, "on", 2) == 0) {
++		_fd650_resume();
++
++		pdata->dev->dot_fg = 0x00;  	// dot 中间冒号
++		pdata->dev->brightness = 3;  	// 数码管亮度
++		Led_Show_650("8888", pdata->dev);
++	} else if (strncmp(buf, "off", 3) == 0) {
++		_fd650_suspend();
++	} else {
++		pr_error("unknown arguement: %s\n", buf);
++	}
++
++	up(&pdata->dev->sem);
++	return size;
++}
++
++static DEVICE_ATTR(led_light, 0664, led_light_show, led_light_store);
++
++static int fd650_driver_probe(struct platform_device *pdev)
++{
++	int ret = -EINVAL;
++
++    if (!pdev->dev.of_node) {
++		pr_error("fd650_driver: pdev->dev.of_node == NULL!\n");
++		ret = -EINVAL;
++		goto error;
++	}
++
++	pdata = kzalloc(sizeof(*pdata), GFP_KERNEL);
++    if (!pdata) {
++        pr_error("malloc platform data failed!\n");
++        ret = -ENOMEM;
++        goto error;
++    }
++
++	pdata->dev = kzalloc(sizeof(*(pdata->dev)), GFP_KERNEL);
++	if (!(pdata->dev)) {
++		pr_error("malloc platform dev failed!\n");
++		ret = -ENOMEM;
++		goto error2;
++	}
++
++	pdata->dev->clk_pin = of_get_named_gpio(pdev->dev.of_node,
++								"fd650_gpio_clk", 0);
++	if (!gpio_is_valid(pdata->dev->clk_pin)) {
++		pr_error("fd650_clk gpio is unvalid");
++		ret = -EINVAL;
++		goto error3;
++	}
++
++	ret = gpio_request(pdata->dev->clk_pin, MOD_NAME_CLK);
++	if (ret) {
++		pr_error("can't request gpio of fd650_clk");
++		goto error3;
++	}
++
++	pdata->dev->dat_pin = of_get_named_gpio(pdev->dev.of_node,
++								"fd650_gpio_dat", 0);
++	if (!gpio_is_valid(pdata->dev->dat_pin)) {
++		pr_error("fd650_dat gpio is unvalid");
++		ret = -EINVAL;
++		goto error3;
++	}
++
++	ret = gpio_request(pdata->dev->dat_pin, MOD_NAME_DAT);
++	if (ret) {
++		pr_error("can't request gpio of fd650_dat");
++		goto error3;
++	}
++
++	platform_set_drvdata(pdev, pdata);
++	register_fd650_driver();
++	sema_init(&pdata->dev->sem, 1);
++
++	kp = kzalloc(sizeof(struct kp), GFP_KERNEL);
++	if (!kp) {
++		kfree(kp);
++		ret = -ENOMEM;
++		goto error4;
++	}
++
++	kp->cdev.name = DEV_NAME;
++	kp->cdev.brightness_set = fd628_brightness_set;
++	ret = led_classdev_register(&pdev->dev, &kp->cdev);
++	if (ret < 0) {
++		goto error5;
++	}
++
++	kp->state = 1;
++	device_create_file(kp->cdev.dev, &dev_attr_led_light);
++
++	// pdata->dev->dot_fg = 0x00;  	// dot 中间冒号
++	// pdata->dev->brightness = 3;  	// 数码管亮度
++	// Led_Show_650("8888", pdata->dev);
++	pdata->dev->display_mode = FD650_MODE_TIME;
++	memset(pdata->dev->error_msg, 0, sizeof(pdata->dev->error_msg));
++	memset(pdata->dev->custom_msg, 0, sizeof(pdata->dev->custom_msg));
++	pdata->dev->error_priority = FD650_PRIORITY_NONE;
++	pdata->dev->error_time = 0;
++	pdata->dev->auto_clear_timeout = 0;
++
++	pdata->dev->dot_fg = 0x00;  	// dot 中间冒号
++	pdata->dev->brightness = 3;  	// 数码管亮度
++	Led_Show_650("8888", pdata->dev);
++
++#ifdef CONFIG_HAS_EARLYSUSPEND
++	//fd650_early_suspend.level = EARLY_SUSPEND_LEVEL_BLANK_SCREEN;
++	//fd650_early_suspend.suspend = fd650_suspend;
++	//fd650_early_suspend.resume = fd650_resume;
++	//register_early_suspend(&fd650_early_suspend);
++#endif
++
++
++	// Create sysfs attributes with proper error handling
++	ret = device_create_file(&pdev->dev, &dev_attr_error_code);
++	if (ret) {
++		pr_error("Failed to create error_code sysfs entry\n");
++		goto error_sysfs1;
++	}
++
++	ret = device_create_file(&pdev->dev, &dev_attr_display_mode);
++	if (ret) {
++		pr_error("Failed to create display_mode sysfs entry\n");
++		goto error_sysfs2;
++	}
++
++	ret = device_create_file(&pdev->dev, &dev_attr_custom_msg);
++	if (ret) {
++		pr_error("Failed to create custom_msg sysfs entry\n");
++		goto error_sysfs3;
++	}
++
++	ret = device_create_file(&pdev->dev, &dev_attr_version);
++	if (ret) {
++		pr_error("Failed to create version sysfs entry\n");
++		goto error_sysfs4;
++	}
++
++    return 0;
++
++error_sysfs4:
++    device_remove_file(&pdev->dev, &dev_attr_custom_msg);
++error_sysfs3:
++    device_remove_file(&pdev->dev, &dev_attr_display_mode);
++error_sysfs2:
++    device_remove_file(&pdev->dev, &dev_attr_error_code);
++error_sysfs1:
++    device_remove_file(kp->cdev.dev, &dev_attr_led_light);
++    led_classdev_unregister(&kp->cdev);
++    goto error5;
++error5:
++	kfree(kp);
++error4:
++	deregister_fd650_driver();
++	gpio_free(pdata->dev->clk_pin);
++   	gpio_free(pdata->dev->dat_pin);
++error3:
++	kfree(pdata->dev);
++error2:
++	kfree(pdata);
++error:
++    return ret;
++}
++
++static void fd650_driver_remove(struct platform_device *pdev)
++{
++	pdata->dev->dot_fg = 0x00;
++	Led_Show_650("****", pdata->dev);
++
++#ifdef CONFIG_HAS_EARLYSUSPEND
++	unregister_early_suspend(&fd650_early_suspend);
++#endif
++	device_remove_file(kp->cdev.dev, &dev_attr_led_light);
++
++	led_classdev_unregister(&kp->cdev);
++	kfree(kp);
++    deregister_fd650_driver();
++
++	gpio_free(pdata->dev->clk_pin);
++   	gpio_free(pdata->dev->dat_pin);
++
++	kfree(pdata->dev);
++	kfree(pdata);
++
++
++	device_remove_file(&pdev->dev, &dev_attr_version);
++	device_remove_file(&pdev->dev, &dev_attr_custom_msg);
++	device_remove_file(&pdev->dev, &dev_attr_display_mode);
++	device_remove_file(&pdev->dev, &dev_attr_error_code);
++
++	pr_dbg("Sysfs entries created successfully\n");
++}
++
++static int _fd650_suspend(void)
++{
++	if (kp->state != 0) {
++		kp->state = 0;
++		pr_dbg("%s:::close LED FD650\n", __func__);
++
++		pdata->dev->dot_fg = 0x00;
++		Led_Show_650("****", pdata->dev);
++
++		pr_dbg("%s:::gpio_free MOD_NAME_CLK and MOD_NAME_DAT\n", __FUNCTION__);
++
++		gpio_free(pdata->dev->clk_pin);
++		gpio_free(pdata->dev->dat_pin);
++	}
++
++	return 0;
++}
++
++static int _fd650_resume(void)
++{
++	int ret = -1;
++
++	if (kp->state != 1) {
++		kp->state = 1;
++		pr_dbg("%s:::gpio_request MOD_NAME_CLK and MOD_NAME_DAT\n", __FUNCTION__);
++
++		ret = gpio_request(pdata->dev->clk_pin, MOD_NAME_CLK);
++		if (ret) {
++			pr_error("---%s----can not request pin %d\n", __func__, pdata->dev->clk_pin);
++			return -1;
++		}
++
++		ret = gpio_request(pdata->dev->dat_pin, MOD_NAME_DAT);
++		if (ret) {
++			pr_error("---%s----can not request pin %d\n", __func__, pdata->dev->dat_pin);
++			return -1;
++		}
++	}
++
++    return 0;
++}
++
++#ifdef CONFIG_HAS_EARLYSUSPEND
++static void fd650_suspend(struct early_suspend *h)
++{
++	_fd650_suspend();
++
++	return ;
++}
++
++static void fd650_resume(struct early_suspend *h)
++{
++	_fd650_resume();
++
++    return ;
++}
++#endif
++
++static void fd650_driver_shutdown(struct platform_device *dev)
++{
++	_fd650_suspend();
++
++	return ;
++}
++
++#ifdef CONFIG_OF
++static const struct of_device_id fd650_dt_match[] = {
++	{ .compatible = "oranth,fd650", .data = NULL },
++	{ },
++};
++MODULE_DEVICE_TABLE(of, fd650_dt_match);
++#else
++#define fd650_dt_match NULL
++#endif
++
++static struct platform_driver fd650_driver = {
++    .probe      = fd650_driver_probe,
++    .remove     = fd650_driver_remove,
++    .shutdown   = fd650_driver_shutdown,
++#ifdef CONFIG_PM
++    //.suspend    = fd650_driver_suspend,
++    //.resume     = fd650_driver_resume,
++#endif
++    .driver     = {
++        .name   = DEV_NAME,
++		.owner	= THIS_MODULE,
++        .of_match_table = of_match_ptr(fd650_dt_match),
++    },
++};
++
++static int __init fd650_driver_init(void)
++{
++    pr_dbg("%s: FD650 Driver init.\n", __func__);
++
++    return platform_driver_register(&fd650_driver);
++}
++
++static void __exit fd650_driver_exit(void)
++{
++    pr_dbg("%s: FD650 Driver exit.\n", __func__);
++
++    platform_driver_unregister(&fd650_driver);
++}
++
++late_initcall(fd650_driver_init);
++module_exit(fd650_driver_exit);
++
++MODULE_AUTHOR("chenmy");
++MODULE_DESCRIPTION("fd650 Driver");
++MODULE_LICENSE("GPL");
+diff -ruN a/drivers/vfd/fd650.h b/drivers/vfd/fd650.h
+--- a/drivers/vfd/fd650.h	1970-01-01 08:00:00.000000000 +0800
++++ b/drivers/vfd/fd650.h	2026-08-01 18:21:06.090540816 +0700
+@@ -0,0 +1,316 @@
++#ifndef __AML_FD650H__
++#define __AML_FD650H__
++
++#include <linux/delay.h>
++#include <asm/io.h>
++#include <linux/gpio.h>
++#include <linux/slab.h>
++#include <linux/uaccess.h>
++#include <linux/of.h>
++#include <linux/time.h>
++#include <linux/semaphore.h>
++
++typedef unsigned char   uint8;
++typedef unsigned short  uint16;
++typedef unsigned long 	uint32;
++
++typedef struct fd650_dev            fd650_dev_t;
++typedef struct fd650_platform_data  fd650_data_t;
++
++static int fd650_debug = 1;
++module_param(fd650_debug, int, 0644);
++
++#if 1
++#define pr_dbg(args...) 	do { \
++								if (fd650_debug > 0) \
++								printk(KERN_ALERT "FD650: " args); \
++							} while(0)
++#else
++#define pr_dbg(args...)
++#endif
++
++#define pr_error(args...) 	printk(KERN_ALERT "FD650: " args)
++
++#define FD650_DRIVER_VERSION	"20250604V2.0.0"
++
++/*
++ * Ioctl definitions
++ */
++
++/* Use 'K' as magic number */
++#define FD650_IOC_MAGIC  	'K'
++#define FD650_IOCTEST        _IO(FD650_IOC_MAGIC, 0)
++
++/*
++ * S means "Set" through a ptr,
++ * G means "Get" (to a pointed var)
++ */
++#define FD650_IOC_SDOT       _IOW(FD650_IOC_MAGIC, 1, int)
++#define FD650_IOC_GDOT       _IOR(FD650_IOC_MAGIC, 2, int)
++#define FD650_IOC_SBRIGHT    _IOW(FD650_IOC_MAGIC, 3, int)
++#define FD650_IOC_GBRIGHT    _IOR(FD650_IOC_MAGIC, 4, int)
++#define FD650_IOC_SCLKSWITCH _IOR(FD650_IOC_MAGIC, 5, int)
++#define FD650_IOC_GCLSSWITCH _IOR(FD650_IOC_MAGIC, 6, int)
++#define FD650_IOC_SCLKTIME   _IOR(FD650_IOC_MAGIC, 7, int)
++#define FD650_IOC_GCLKTIME   _IOR(FD650_IOC_MAGIC, 8, int)
++#define FD650_IOC_GVER       _IOR(FD650_IOC_MAGIC, 9, int)
++
++// **NEW: Enhanced display control commands**
++#define FD650_IOC_SET_MODE   _IOW(FD650_IOC_MAGIC, 10, int)   // Set display mode (0=time, 1=error, 2=custom)
++#define FD650_IOC_GET_MODE   _IOR(FD650_IOC_MAGIC, 11, int)   // Get current display mode
++#define FD650_IOC_SET_ERROR  _IOW(FD650_IOC_MAGIC, 12, char*) // Set error message (4 chars)
++#define FD650_IOC_GET_ERROR  _IOR(FD650_IOC_MAGIC, 13, char*) // Get current error message
++#define FD650_IOC_CLEAR_ERROR _IO(FD650_IOC_MAGIC, 14)        // Clear error and return to time mode
++#define FD650_IOC_SET_CUSTOM _IOW(FD650_IOC_MAGIC, 15, char*) // Set custom message (4 chars)
++
++#define FD650_IOC_MAXNR      16  // Updated max number
++
++#define MOD_NAME_CLK         "fd650_clk"
++#define MOD_NAME_DAT         "fd650_dat"
++#define DEV_NAME             "fd650_dev"
++
++// **NEW: Display modes**
++#define FD650_MODE_TIME      0  // Normal time display
++#define FD650_MODE_ERROR     1  // Error code display
++#define FD650_MODE_CUSTOM    2  // Custom message display
++
++// **NEW: Error priority levels**
++#define FD650_PRIORITY_NONE     0  // No error
++#define FD650_PRIORITY_LOW      1  // Low priority error
++#define FD650_PRIORITY_NORMAL   2  // Normal priority error
++#define FD650_PRIORITY_HIGH     3  // High priority error
++#define FD650_PRIORITY_CRITICAL 4  // Critical error
++
++struct fd650_dev {
++	int clk_pin;
++	int dat_pin;
++
++	uint8 wbuf[7];
++    uint8 dot_fg;
++	uint8 brightness;
++	struct semaphore sem;
++
++	// **NEW: Enhanced display control fields**
++	int display_mode;          // Current display mode (0=time, 1=error, 2=custom)
++	char error_msg[5];         // Error message buffer (4 chars + null terminator)
++	char custom_msg[5];        // Custom message buffer (4 chars + null terminator)
++	int error_priority;        // Error priority level
++	unsigned long error_time;  // Timestamp when error was set (for auto-clear)
++	int auto_clear_timeout;    // Auto-clear timeout in seconds (0=no auto-clear)
++};
++
++struct fd650_platform_data {
++	struct fd650_dev *dev;
++};
++
++#define KEYBOARD_SCAN_FRE     2
++#define KEYBOARD_MARK         0x00
++#define WINSAT_FD650
++
++#define	DELAY			  	udelay(10)	// Delay time sequence macros
++
++#ifndef WINSAT_FD650
++#define LEDMAPNUM 			23			// Digital tube code array maximum
++#else
++#define LEDMAPNUM 			58        	// Digital tube code array maximum @winsat code
++#endif
++
++/* Character conversion of digital tube display code */
++typedef struct _led_bitmap
++{
++	uint8 character;
++	uint8 bitmap;
++} led_bitmap;
++
++#ifndef WINSAT_FD650
++/** Character conversion of digital tube display code array*/
++const led_bitmap BCD_decode_tab[LEDMAPNUM] =
++{
++	{'0', 0x3F}, {'1', 0x06}, {'2', 0x5B}, {'3', 0x4F},
++	{'4', 0x66}, {'5', 0x6D}, {'6', 0x7D}, {'7', 0x07},
++	{'8', 0x7F}, {'9', 0x6F}, {'a', 0x77}, {'A', 0x77},
++	{'b', 0x7C}, {'B', 0x7C}, {'c', 0x58}, {'C', 0x39},
++	{'d', 0x5E}, {'D', 0x5E}, {'e', 0x79}, {'E', 0x79},
++	{'f', 0x71}, {'F', 0x71} ,{'*', 0x00}
++};//BCD码字映射
++#else
++/*    __a__
++      /f       /b
++     /        /
++    __g__
++   /e      /c
++  /        /
++ __d___ .h   */
++#ifndef CONFIG_FD650_REVERT
++#define SEG_A 0x01
++#define SEG_B 0x02
++#define SEG_C 0x04
++#define SEG_D 0x08
++#define SEG_E 0x10
++#define SEG_F 0x20
++#define SEG_G 0x40
++#define SEG_H 0x80
++#else
++/*    __d__
++      /c       /e
++     /        /
++    __g__
++   /b      /f
++  /        /
++ __a___ .h   */
++#define SEG_A 0x08
++#define SEG_B 0x10
++#define SEG_C 0x20
++#define SEG_D 0x01
++#define SEG_E 0x02
++#define SEG_F 0x04
++#define SEG_G 0x40
++#define SEG_H 0x80
++#endif
++
++#define CHAR_DOT    SEG_H
++#define CHAR_0 		SEG_A|SEG_B|SEG_C|SEG_D|SEG_E|SEG_F
++#define CHAR_1 		SEG_B|SEG_C
++#define CHAR_2 		SEG_A|SEG_B|SEG_G|SEG_E|SEG_D
++#define CHAR_3 		SEG_A|SEG_B|SEG_C|SEG_D|SEG_G
++#define CHAR_4 		SEG_B|SEG_C|SEG_F|SEG_G
++#define CHAR_5		SEG_A|SEG_F|SEG_G|SEG_C|SEG_D
++#define CHAR_6 		SEG_A|SEG_F|SEG_E|SEG_G|SEG_D|SEG_C
++#define CHAR_7 		SEG_A|SEG_B|SEG_C
++#define CHAR_8 		SEG_A|SEG_B|SEG_C|SEG_D|SEG_E|SEG_F|SEG_G
++#define CHAR_9 		SEG_A|SEG_B|SEG_C|SEG_D|SEG_F|SEG_G
++#define CHAR_a 		SEG_A|SEG_B|SEG_C|SEG_E|SEG_F|SEG_G
++#define CHAR_A 		SEG_A|SEG_B|SEG_C|SEG_E|SEG_F|SEG_G
++#define CHAR_b 		SEG_C|SEG_D|SEG_E|SEG_F|SEG_G
++#define CHAR_B 		SEG_A|SEG_B|SEG_C|SEG_D|SEG_E|SEG_F|SEG_G
++#define CHAR_c 		SEG_D|SEG_E|SEG_G
++#define CHAR_C 		SEG_A|SEG_D|SEG_E|SEG_F
++#define CHAR_d 		SEG_B|SEG_C|SEG_D|SEG_E|SEG_G
++#define CHAR_D 		SEG_A|SEG_B|SEG_C|SEG_D|SEG_E|SEG_F
++#define CHAR_e 		SEG_A|SEG_D|SEG_E|SEG_F|SEG_G
++#define CHAR_E 		SEG_A|SEG_D|SEG_E|SEG_F|SEG_G
++#define CHAR_F 		SEG_A|SEG_E|SEG_F|SEG_G
++#define CHAR_f 		SEG_A|SEG_E|SEG_F|SEG_G
++#define CHAR_g 		CHAR_9
++#define CHAR_G 		CHAR_6
++#define CHAR_h 		SEG_C|SEG_E|SEG_F|SEG_G
++#define CHAR_H 		SEG_B|SEG_C|SEG_E|SEG_F|SEG_G
++#define CHAR_i 		SEG_C
++#define CHAR_I 		SEG_C|SEG_D
++#define CHAR_J 		SEG_A|SEG_B|SEG_C|SEG_D
++#define CHAR_j 		CHAR_I
++#define CHAR_l 		SEG_E|SEG_F
++#define CHAR_L 		SEG_D|SEG_E|SEG_F
++#define CHAR_n 		SEG_C|SEG_E|SEG_G
++#define CHAR_N 		SEG_A|SEG_B|SEG_C|SEG_E|SEG_F
++#define CHAR_o 		SEG_C|SEG_D|SEG_E|SEG_G
++#define CHAR_O 		CHAR_0
++#define CHAR_p 		SEG_A|SEG_B|SEG_E|SEG_F|SEG_G
++#define CHAR_P 		CHAR_p
++#define CHAR_q 		SEG_A|SEG_B|SEG_C|SEG_F|SEG_G
++#define CHAR_Q 		CHAR_q
++#define CHAR_r 		SEG_A|SEG_E|SEG_F
++#define CHAR_R 		CHAR_r
++#define CHAR_s 		CHAR_5
++#define CHAR_S 		CHAR_5
++#define CHAR_t 		SEG_D|SEG_E|SEG_F|SEG_G
++#define CHAR_T 		CHAR_t
++#define CHAR_u 		SEG_C|SEG_D|SEG_E
++#define CHAR_U 		SEG_B|SEG_C|SEG_D|SEG_E|SEG_F
++#define CHAR_y 		SEG_B|SEG_C|SEG_F|SEG_G
++#define CHAR_Y 		CHAR_y
++#define CHAR_z 		CHAR_2
++#define CHAR_Z		CHAR_2
++#define CHAR_TAB1 	SEG_G
++#define CHAR_TAB2 	SEG_D
++#define CHAR_SPA 	0x00
++
++const led_bitmap BCD_decode_tab[] =
++{
++	{'.', CHAR_DOT}, /* Let's put the dot bitmap into the table */
++	{'0', CHAR_0}, {'1', CHAR_1}, {'2', CHAR_2}, {'3', CHAR_3},
++	{'4', CHAR_4}, {'5', CHAR_5}, {'6', CHAR_6}, {'7', CHAR_7},
++	{'8', CHAR_8}, {'9', CHAR_9}, {'a', CHAR_a}, {'A', CHAR_A},
++	{'b', CHAR_b}, {'B', CHAR_B}, {'c', CHAR_c}, {'C', CHAR_C},
++	{'d', CHAR_d}, {'D', CHAR_D}, {'e', CHAR_e}, {'E', CHAR_E},
++	{'f', CHAR_f}, {'F', CHAR_F}, {'g', CHAR_g}, {'G', CHAR_G},
++	{'h', CHAR_h}, {'H', CHAR_H}, {'i', CHAR_i}, {'I', CHAR_I},
++	{'j', CHAR_j}, {'J', CHAR_J}, {'l', CHAR_l}, {'L', CHAR_L},
++	{'n', CHAR_n}, {'N', CHAR_N}, {'o', CHAR_o}, {'O', CHAR_O},
++	{'p', CHAR_p}, {'P', CHAR_P}, {'q', CHAR_Q}, {'Q', CHAR_Q},
++	{'r', CHAR_r}, {'R', CHAR_R}, {'s', CHAR_s}, {'S', CHAR_S},
++	{'t', CHAR_t}, {'T', CHAR_T}, {'u', CHAR_u}, {'U', CHAR_U},
++	{'y', CHAR_y}, {'Y', CHAR_Y}, {'z', CHAR_z}, {'Z', CHAR_Z},
++	{':', CHAR_DOT}, {'-', CHAR_TAB1}, {'_', CHAR_TAB2}, {' ', CHAR_SPA},
++	{'*', CHAR_SPA}
++};
++#endif
++
++// **NEW: Common error code definitions for convenience**
++#define FD650_ERROR_NETWORK    "InEt"  // Internet/Network error
++#define FD650_ERROR_WIFI       "WiFi"  // WiFi connection error
++#define FD650_ERROR_SYSTEM     "SYS "  // System error
++#define FD650_ERROR_STORAGE    "dISC"  // Storage/Disk error
++#define FD650_ERROR_BATTERY    "bAtt"  // Battery error
++#define FD650_ERROR_TEMPERATURE "tEMP" // Temperature error
++#define FD650_ERROR_BOOT       "boot"  // Boot error
++#define FD650_ERROR_UPDATE     "UPdt"  // Update error
++#define FD650_ERROR_GENERIC_1  "E001"  // Generic error code 1
++#define FD650_ERROR_GENERIC_2  "E002"  // Generic error code 2
++#define FD650_ERROR_GENERIC_3  "E003"  // Generic error code 3
++
++// **NEW: Special display messages**
++#define FD650_MSG_LOADING      "LOAd"  // Loading message
++#define FD650_MSG_DONE         "donE"  // Completion message
++#define FD650_MSG_FAIL         "FAiL"  // Failure message
++#define FD650_MSG_PASS         "PASS"  // Success message
++#define FD650_MSG_TEST         "tESt"  // Test mode message
++#define FD650_MSG_BLANK        "    "  // Blank display
++
++// 设置系统参数命令 (existing brightness/system commands unchanged)
++#define FD650_BIT_ENABLE	0x01		///< 开启/关闭位
++#define FD650_BIT_SLEEP		0x04		///< 睡眠控制位
++#define FD650_BIT_7SEG		0x08		///< 7段控制位
++#define FD650_BIT_INTENS1	0x10		///< 1级亮度
++#define FD650_BIT_INTENS2	0x20		///< 2级亮度
++#define FD650_BIT_INTENS3	0x30		///< 3级亮度
++#define FD650_BIT_INTENS4	0x40		///< 4级亮度
++#define FD650_BIT_INTENS5	0x50		///< 5级亮度
++#define FD650_BIT_INTENS6	0x60		///< 6级亮度
++#define FD650_BIT_INTENS7	0x70		///< 7级亮度
++#define FD650_BIT_INTENS8	0x00		///< 8级亮度
++
++#define FD650_SYSOFF	0x0400			///< 关闭显示、关闭键盘
++#define FD650_SYSON		( FD650_SYSOFF | FD650_BIT_ENABLE )	///< 开启显示、键盘
++#define FD650_SLEEPOFF	FD650_SYSOFF	///< 关闭睡眠
++#define FD650_SLEEPON	( FD650_SYSOFF | FD650_BIT_SLEEP )	///< 开启睡眠
++#define FD650_7SEG_ON	( FD650_SYSON | FD650_BIT_7SEG )	///< 开启七段模式
++#define FD650_8SEG_ON	( FD650_SYSON | 0x00 )	///< 开启八段模式
++#define FD650_SYSON_1	( FD650_SYSON | FD650_BIT_INTENS1 )	///< 开启显示、键盘、1级亮度
++#define FD650_SYSON_2	( FD650_SYSON | FD650_BIT_INTENS2 )
++#define FD650_SYSON_3	( FD650_SYSON | FD650_BIT_INTENS3 )
++#define FD650_SYSON_4	( FD650_SYSON | FD650_BIT_INTENS4 )	///< 开启显示、键盘、4级亮度
++#define FD650_SYSON_5	( FD650_SYSON | FD650_BIT_INTENS5 )
++#define FD650_SYSON_6	( FD650_SYSON | FD650_BIT_INTENS6 )
++#define FD650_SYSON_7	( FD650_SYSON | FD650_BIT_INTENS7 )
++#define FD650_SYSON_8	( FD650_SYSON | FD650_BIT_INTENS8 )	///< 开启显示、键盘、8级亮度
++
++// 加载字数据命令 (existing digit position commands unchanged)
++#define FD650_DIG0		0x1400			///< 数码管位0显示,需另加8位数据
++#define FD650_DIG1		0x1500			///< 数码管位1显示,需另加8位数据
++#define FD650_DIG2		0x1600			///< 数码管位2显示,需另加8位数据
++#define FD650_DIG3		0x1700			///< 数码管位3显示,需另加8位数据
++
++#define FD650_DOT		0x0080			///< 数码管小数点显示
++
++// 读取按键代码命令 (existing key read command unchanged)
++#define FD650_GET_KEY	0x0700			///< 获取按键,返回按键代码
++
++// **NEW: Helper macros for error handling**
++#define FD650_IS_ERROR_MODE(dev)    ((dev)->display_mode == FD650_MODE_ERROR)
++#define FD650_IS_TIME_MODE(dev)     ((dev)->display_mode == FD650_MODE_TIME)
++#define FD650_IS_CUSTOM_MODE(dev)   ((dev)->display_mode == FD650_MODE_CUSTOM)
++#define FD650_HAS_ERROR(dev)        (strlen((dev)->error_msg) > 0)
++#define FD650_HAS_CUSTOM(dev)       (strlen((dev)->custom_msg) > 0)
++
++#endif
+diff -ruN a/drivers/vfd/Kconfig b/drivers/vfd/Kconfig
+--- a/drivers/vfd/Kconfig	1970-01-01 08:00:00.000000000 +0800
++++ b/drivers/vfd/Kconfig	2026-08-01 18:21:06.091540875 +0700
+@@ -0,0 +1,20 @@
++#
++# VFD device configuration
++#
++
++menuconfig VFD
++	bool "VFD Device Support"
++
++
++if VFD
++
++config FD650
++	tristate "FD650 Driver Support"
++	---help---
++	  Say Y here if you want to use the FD650 for digitron.
++
++config FD650_REVERT
++	bool "revert the digitron"
++	default n
++
++endif # VFD
+diff -ruN a/drivers/vfd/Makefile b/drivers/vfd/Makefile
+--- a/drivers/vfd/Makefile	1970-01-01 08:00:00.000000000 +0800
++++ b/drivers/vfd/Makefile	2026-08-01 18:21:06.093540993 +0700
+@@ -0,0 +1,5 @@
++#
++# Makefile for the VFD device drivers.
++#
++
++obj-$(CONFIG_FD650)	+= fd650.o
