@@ -14,8 +14,8 @@ setenv force_16x9_display "false"
 # Show what uboot default fdtfile is
 echo "U-boot default fdtfile: ${fdtfile}"
 
-if test -e ${devtype} ${devnum} ${prefix}armbianEnv.txt; then
-	load ${devtype} ${devnum} ${loadaddr} ${prefix}armbianEnv.txt
+if test -e ${devtype} ${devnum}:${distro_bootpart} ${prefix}armbianEnv.txt; then
+	load ${devtype} ${devnum}:${distro_bootpart} ${loadaddr} ${prefix}armbianEnv.txt
 	env import -t ${loadaddr} ${filesize}
 fi
 
@@ -38,7 +38,7 @@ fi
 
 setenv bootargs "${bootargs} root=${rootdev} rootfstype=${rootfstype} rw fsck.repair=yes rootwait ${consoleargs} partition_type=generic loglevel=${verbosity} ${plymouthargs} ${extraargs} ${extraboardargs}"
 
-load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
+load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
 fdt addr ${fdt_addr_r}
 fdt resize 65536
 
@@ -57,14 +57,14 @@ else
 fi
 
 for overlay_file in ${overlays}; do
-	if load ${devtype} ${devnum} ${scriptaddr} ${prefix}dtb/amlogic/overlay/${overlay_prefix}-${overlay_file}.dtbo; then
+	if load ${devtype} ${devnum}:${distro_bootpart} ${scriptaddr} ${prefix}dtb/amlogic/overlay/${overlay_prefix}-${overlay_file}.dtbo; then
 		echo "Applying kernel provided DT overlay ${overlay_prefix}-${overlay_file}.dtbo"
 		fdt apply ${scriptaddr} || setenv overlay_error "true"
 	fi
 done
 
 for overlay_file in ${user_overlays}; do
-	if load ${devtype} ${devnum} ${scriptaddr} ${prefix}overlay-user/${overlay_file}.dtbo; then
+	if load ${devtype} ${devnum}:${distro_bootpart} ${scriptaddr} ${prefix}overlay-user/${overlay_file}.dtbo; then
 		echo "Applying user provided DT overlay ${overlay_file}.dtbo"
 		fdt apply ${scriptaddr} || setenv overlay_error "true"
 	fi
@@ -72,14 +72,14 @@ done
 
 if test "${overlay_error}" = "true"; then
 	echo "Error applying DT overlays, restoring original DT"
-	load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
+	load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
 else
-	if load ${devtype} ${devnum} ${scriptaddr} ${prefix}dtb/amlogic/overlay/${overlay_prefix}-fixup.scr; then
+	if load ${devtype} ${devnum}:${distro_bootpart} ${scriptaddr} ${prefix}dtb/amlogic/overlay/${overlay_prefix}-fixup.scr; then
 		echo "Applying kernel provided DT fixup script (${overlay_prefix}-fixup.scr)"
 		source ${scriptaddr}
 	fi
-	if test -e ${devtype} ${devnum} ${prefix}fixup.scr; then
-		load ${devtype} ${devnum} ${scriptaddr} ${prefix}fixup.scr
+	if test -e ${devtype} ${devnum}:${distro_bootpart} ${prefix}fixup.scr; then
+		load ${devtype} ${devnum}:${distro_bootpart} ${scriptaddr} ${prefix}fixup.scr
 		echo "Applying user provided fixup script (fixup.scr)"
 		source ${scriptaddr}
 	fi
@@ -87,8 +87,8 @@ fi
 
 # The symlinks for kernel and initrd.img are at different locations in debian and ubuntu
 # Check and load from a location that exists
-load ${devtype} ${devnum} ${kernel_addr_r} ${prefix}Image
-load ${devtype} ${devnum} ${ramdisk_addr_r} ${prefix}Initrd
+load ${devtype} ${devnum}:${distro_bootpart} ${kernel_addr_r} ${prefix}Image
+load ${devtype} ${devnum}:${distro_bootpart} ${ramdisk_addr_r} ${prefix}Initrd
 booti ${kernel_addr_r} ${ramdisk_addr_r}:${filesize} ${fdt_addr_r}
 
 # Recompile with:

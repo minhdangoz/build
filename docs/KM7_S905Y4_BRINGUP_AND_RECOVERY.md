@@ -688,6 +688,9 @@ Before flashing any future KM7 EMMC image:
 - `amlogic-mmc.ko` and `cqhci.ko` are present in initrd.
 - The root filesystem passes `e2fsck -fn`.
 - The upgrade package contains the intended signed bootloader.
+- The packaged `/boot/boot.scr` qualifies every eMMC filesystem read with
+  `${devnum}:${distro_bootpart}`.
+- The built U-Boot config contains `CONFIG_CMD_SETEXPR=y`.
 - UART reaches U-Boot and `printenv usb_burning update` is valid.
 - `run usb_burning` enumerates on the host.
 - The physical AP222 recovery key enters USB Burning mode.

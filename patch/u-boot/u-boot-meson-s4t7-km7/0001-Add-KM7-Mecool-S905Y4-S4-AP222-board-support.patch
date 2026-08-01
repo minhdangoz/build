@@ -643,7 +643,7 @@ index 0000000000..1c53c51d5d
 +CONFIG_CMD_SF_TEST=y
 +CONFIG_CMD_USB=y
 +CONFIG_CMD_SARADC=y
-+# CONFIG_CMD_SETEXPR is not set
++CONFIG_CMD_SETEXPR=y
 +CONFIG_CMD_BMP=y
 +CONFIG_CMD_CACHE=y
 +CONFIG_CMD_BTRFS=y
@@ -3541,4 +3541,3 @@ index 0000000000..86417c4d24
 +void __attribute__((weak)) md5_wd (unsigned char *input, int len, unsigned char output[16],	unsigned int chunk_sz){}
 -- 
 2.34.1
-

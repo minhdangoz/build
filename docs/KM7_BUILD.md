@@ -40,26 +40,78 @@ cd /media/jimmy/WORK/AOSP/TOOLS/khadas-utils
 sudo ./INSTALL
 ```
 
-Put KM7 into Amlogic USB Burning mode, then flash the generated package. After
-a newer build, replace the filename below with the path printed by
-`./km7/build-emmc.sh`:
+Put KM7 into Amlogic USB Burning mode and confirm the target USB serial:
 
 ```bash
-burn-tool -v aml -b VIM1S -i \
-  '/media/jimmy/WORK/AOSP/build/output/images/Armbian-unofficial_26.08.0-trunk_Km7_noble_legacy_5.15.137_gnome_desktop.emmc.img'
+lsusb -v -d 1b8e:c004 2>/dev/null | grep -E 'iProduct|iSerial'
 ```
 
-`-b VIM1S` is intentional even though the device is KM7. In `khadas-utils` it
-selects the Amlogic **S4** backend and runs `adnl_burn_pkg`; it does not replace
-the KM7 DTB or signed KM7 bootloader stored inside the image.
+Flash the generated package with the target serial selected explicitly. After
+a newer build, replace the image filename below with the path printed by
+`./km7/build-emmc.sh`, and replace the sample serial with the `iSerial` value
+reported for the connected KM7:
 
-The command performs a full flash erase by default, so do not disconnect USB
-or power while the percentage is moving. A completed run must reach 100% and
-print `Done!`; afterward, disconnect the burning cable and cold-boot the box.
+```bash
+cd /media/jimmy/WORK/AOSP/TOOLS/khadas-utils
 
-Observed on the real KM7 on 2026-08-01: Linux detected the Amlogic device,
-accepted the generated `.emmc.img`, and started transferring it (`6%` seen).
-Final flash completion and the first Armbian boot are still pending validation.
+./aml-flash-tool/tools/adnl/adnl_burn_pkg \
+  -s '001671190592071700000000' \
+  -p '/media/jimmy/WORK/AOSP/build/output/images/Armbian-unofficial_26.08.0-trunk_Km7_noble_legacy_5.15.137_gnome_desktop.emmc.img' \
+  -e 1 \
+  -r 1
+```
+
+These are the standard KM7 full-flash settings used by this guide:
+
+- `-s <serial>` selects the intended Amlogic DNL device. This matters when
+  more than one Amlogic device is connected.
+- `-e 1` erases the whole eMMC before writing the package.
+- `-r 1` automatically reboots the KM7 after a successful flash.
+
+Do not disconnect USB or power while the percentage is moving. A completed
+run must reach 100%, verify the package, print `burn successful^_^`, and then
+reboot the device automatically. If the board remains in DNL mode despite a
+successful result, disconnect both power and the OTG cable, wait a few
+seconds, and cold-boot it.
+
+The higher-level equivalent is `aml-burn-tool -b VIM1S -i <image> -r`:
+`VIM1S` selects the Amlogic **S4** ADNL backend, the wrapper maps its default
+full erase to `-e 1`, and `-r` maps to ADNL `-r 1`. The top-level `burn-tool`
+does not currently forward the reboot option, so it is not the recommended
+command for this workflow.
+
+Observed on the real KM7 on 2026-08-01: Linux detected the Amlogic device and
+successfully flashed and verified the generated `.emmc.img`. `burn-tool`
+printed `burn successful^_^` and `Done!`. The first successful Armbian boot is
+still pending validation after the boot-script fix below.
+
+### U-Boot finds `boot.scr`, then falls back to PXE
+
+If UART contains all of these messages:
+
+```text
+Scanning mmc 1:3...
+Found U-Boot script /boot/boot.scr
+Unknown command 'setexpr'
+Bad Linux ARM64 Image magic!
+BOOTP broadcast 1
+```
+
+the flash succeeded and this is not a `burn-tool` failure. U-Boot found the
+root filesystem on eMMC partition 3, but the old KM7 boot script omitted
+`:${distro_bootpart}` when loading `armbianEnv.txt`, the DTB, `Image`, and
+`Initrd`. Those reads therefore targeted the wrong partition and PXE was only
+the final fallback.
+
+The fix is owned by:
+
+- `config/bootscripts/boot-meson-s4t7.cmd`: every filesystem command uses
+  `${devnum}:${distro_bootpart}`.
+- the KM7 U-Boot config: `CONFIG_CMD_SETEXPR=y`.
+
+After rebuilding and flashing, UART should progress from finding `boot.scr` to
+loading the environment, `km7.dtb`, `Image`, and `Initrd`, then print
+`Starting kernel ...`. It must not print `Bad Linux ARM64 Image magic!`.
 
 If the device does not enumerate, use UART at 921600 baud and enter burning
 mode from the `km7#` prompt:
