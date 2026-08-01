@@ -27,6 +27,9 @@ S905Y4 into a mainline-kernel board.
 
 ## Build
 
+For the short, current build recipe and one-command wrapper, see
+[`docs/KM7_BUILD.md`](../docs/KM7_BUILD.md).
+
 ```bash
 cd /media/jimmy/WORK/AOSP/build
 ./compile.sh \
@@ -34,7 +37,8 @@ cd /media/jimmy/WORK/AOSP/build
   BRANCH=legacy \
   RELEASE=noble \
   BUILD_DESKTOP=yes \
-  DESKTOP_ENVIRONMENT=xfce \
+  DESKTOP_TIER=mid \
+  DESKTOP_ENVIRONMENT=gnome \
   KERNEL_CONFIGURE=no
 ```
 

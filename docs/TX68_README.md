@@ -63,6 +63,18 @@ sudo apt install gcc-arm-linux-gnueabi device-tree-compiler \
 
 ## 3. Quy trình build
 
+### Một lệnh — build raw image và PhoenixSuit eMMC image
+
+```bash
+cd /media/jimmy/WORK/AOSP/build
+./tx68/build-emmc.sh
+```
+
+Wrapper này chạy toàn bộ Bước 1 và Bước 3 bên dưới, dùng sẵn U-Boot
+`linux-u-boot-next-tx68-fdtfix_0.1.0_arm64.deb`, rồi kiểm tra SHA256 của cả
+raw image và PhoenixSuit image. Chỉ cần chạy riêng Bước 2 khi sửa source hoặc
+patch U-Boot.
+
 ### Bước 1 — Kernel, DTB, rootfs (armbian)
 
 ```bash
