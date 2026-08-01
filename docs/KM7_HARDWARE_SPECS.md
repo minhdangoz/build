@@ -4,41 +4,60 @@ Board: Mecool KM7. SoC: Amlogic S905Y4 (silicon family S4, board variant
 `s4_s905y4_ap222` / `AP222`). Same SoC family as Khadas VIM1S, different
 board wiring.
 
-All values below were traced through the Fenix reference implementation and
-are now carried by [`config/boards/km7.csc`](../config/boards/km7.csc), the
-tracked KM7 U-Boot patch series and the tracked kernel/common-drivers patch
-series in this repository. They are not guesses from the VIM1S profile.
-Where the source carries a live-verified comment (hardware tested on a real
-unit), it is called out explicitly. See
+The hardware source of truth for this port is the Android KM7 tree at
+`/media/jimmy/WORK/AOSP/s905y4`: the board product under
+`device/amlogic/KM7`, the 4 GB board DTS
+`common/arch/arm64/boot/dts/amlogic/s4_s905y4_ap222_drm_4g.dts`, its S4 SoC
+includes, and the AP222 U-Boot configuration. Fenix/VIM1S is a build-system
+reference only and must not override KM7 board data. Live identification from
+the physical unit takes precedence where the Android tree describes multiple
+SKUs or conflicts with public product material.
+
+The resulting values are carried by [`config/boards/km7.csc`](../config/boards/km7.csc),
+the tracked KM7 U-Boot patch series and the tracked kernel/common-drivers patch
+series in this repository. Where the source carries a live-verified comment
+(hardware tested on a real unit), it is called out explicitly. See
 [KM7_S905Y4_BRINGUP_AND_RECOVERY.md](KM7_S905Y4_BRINGUP_AND_RECOVERY.md) for
 the original bring-up evidence and [`../km7/README.md`](../km7/README.md) for
 the current Armbian build/acceptance workflow.
 
 ## CPU
 
-- 4x ARM Cortex-A55 (`arm,cortex-a55`), PSCI enable-method, 64-bit (armv8).
-- OPP table up to 1704 MHz at the SoC/DVFS level (`meson-s4.dtsi`
-  `s905y4_opp_table*`, 769 mV @ 100 MHz up to 909 mV @ 1704 MHz).
-- This project clamps scaling to 500–1704 MHz with the `conservative`
-  governor. Fenix's old 2208 MHz maximum was above the highest S905Y4 OPP and
-  is deliberately not copied.
+- Android's `meson-s4.dtsi` declares 4x ARM Cortex-A55 (`arm,cortex-a55`),
+  PSCI enable-method, 64-bit (armv8). Public S905Y4 material instead says
+  Cortex-A35, so the exact core identity remains explicitly **unconfirmed**
+  until the physical KM7's MIDR is read; the DT string alone is not silicon
+  identification.
+- All four silicon-bin OPP tables reach 2004 MHz. Depending on the secure
+  firmware-selected table, that OPP requests 939–1009 mV; the S4 PWM regulator
+  supports up to 1049 mV and the S4 system PLL contains the matching 2004 MHz
+  rate.
+- This project clamps scaling to 500–2004 MHz and defaults to the
+  `performance` governor. Khadas also specifies the S905Y4 as a 2.0 GHz SoC.
+  Fenix's old 2208 MHz maximum is not a vendor OPP and is deliberately not
+  copied.
 - Multi-table OPP (`multi_tables_available`) bound to all 4 CPU nodes.
 
 ## GPU
 
-- ARM Mali G52 MP8 (Bifrost), driver type `gondul`, GPU_VER `25p0`.
+- Android KM7 source does **not** support the previous "Mali G52 MP8 / gondul
+  25p0" claim. Its Bifrost node declares `num_of_pp = <2>` and `sc_mpp = <1>`,
+  while the KM7 kernel build selects Mali driver `r43p0`. The exact Mali product
+  (for example G31 versus G52) remains unconfirmed until the physical GPU ID is
+  read; do not infer it from the generic DT compatible.
 - Display server: Wayland for desktop builds, GBM for server builds
   (`GPU_PLATFORM` in KM7.conf).
 - The default Armbian `s4-s905y4-panfrost.dtbo` overlay replaces the GPU
   compatible with `arm,mali-bifrost`; real-hardware renderer proof is pending.
-- DVFS table: 285/400/500/666/850 MHz steps, `clk_level = <8>` (km7.dts).
+- GPU DVFS table: 285.714/400/500/666.666/846 MHz. The last two table entries
+  both reference the 846 MHz configuration, exactly as in the Android 4 GB DTS.
 
 ## GPU vs VPU — they are separate blocks, do not conflate them
 
 This trips people up constantly on Amlogic, so state it plainly:
 
-- **GPU** = Mali G52 (`bifrost` node). 3D/GLES for the desktop. Irrelevant to
-  video decoding.
+- **GPU** = Mali Bifrost-family block (exact product ID pending live proof).
+  It provides 3D/GLES for the desktop and is irrelevant to video decoding.
 - **VPU/VDEC** = the Amlogic hardware video decoders driven by the `amvdec_*`
   drivers. This is what must handle H.264/H.265/VP9/AV1 so playback does not
   land on the CPU. It needs **no** Mali userspace at all.
@@ -172,12 +191,15 @@ the bring-up doc for the module-list fix; without it Linux cannot see any
 
 ## Display / HDMI
 
-- `amhdmitx` / `drm_amhdmitx`: enabled, HDCP enabled (`hdcp_ctl_lvl = <1>`,
-  `hdcp = "okay"`).
+- `amhdmitx` / `drm_amhdmitx`: enabled. HDCP is explicitly **disabled**
+  (`hdcp = "disabled"`) to match Android's KM7 4 GB DTS; the previous enabled
+  setting came from the wrong board reference.
 - CVBS output (`drm_amcvbsout`) also enabled; LCD output (`drm_lcd`) disabled
   — HDMI/CVBS board, no panel.
 - Framebuffer (`&fb`) disabled in favor of DRM/VPU path (`drm_vpu`,
   `status = "okay"`), default resolution `1920x1080`.
+- VPU clock level is `7`, matching Android KM7; the previous level `8` was not
+  the board source of truth.
 - `vdin0`/`vdin1` video-input paths present for capture, `vdin1` wired to a
   reserved CMA pool.
 

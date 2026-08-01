@@ -1613,13 +1613,13 @@ index 000000000..1e1ac770b
 +
 +&amhdmitx {
 +	status = "okay";
-+	/* hdcp ctrl 0:sysctrl, 1: drv, 2: linux app */
-+	hdcp_ctl_lvl = <1>;
 +};
 +
 +&drm_amhdmitx {
 +	status = "okay";
-+	hdcp = "okay";
++	/* The Android KM7 4 GB board DTS explicitly disables HDCP. Keep this
++	 * board setting separate from VIM1S/Fenix policy. */
++	hdcp = "disabled";
 +};
 +
 +&drm_amcvbsout {
@@ -1631,7 +1631,7 @@ index 000000000..1e1ac770b
 +};
 +
 +&vpu {
-+	clk_level = <8>;
++	clk_level = <7>;
 +};
 +
 +/*if you want to use vdin just modify status to "ok"*/
@@ -1711,4 +1711,3 @@ index 000000000..1e1ac770b
 +};
 -- 
 2.34.1
-

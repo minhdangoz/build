@@ -24,12 +24,12 @@ OVERLAY_PREFIX="s4-s905y4"
 # still requires proof from the renderer on real KM7 hardware.
 DEFAULT_OVERLAYS="panfrost"
 
-# KM7 is mains-powered and Fenix used this range/governor. 1704 MHz is the
-# highest OPP actually present in meson-s4.dtsi; do not inherit Fenix's stale
-# 2208 MHz clamp, which names a frequency the S905Y4 table does not provide.
+# KM7 is mains-powered. Amlogic's four S905Y4 silicon-bin OPP tables all top
+# out at 2004 MHz and the S4 clock driver carries the matching PLL rate.
+# 2208 MHz is not a vendor OPP and remains unsupported.
 CPUMIN="500000"
-CPUMAX="1704000"
-GOVERNOR="conservative"
+CPUMAX="2004000"
+GOVERNOR="performance"
 
 # TV-box images should reach the desktop without requiring a keyboard during
 # first boot. Account/locale values still come from userpatches/firstboot.conf.
