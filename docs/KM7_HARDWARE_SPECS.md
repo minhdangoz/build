@@ -49,14 +49,19 @@ the current Armbian build/acceptance workflow.
   (`GPU_PLATFORM` in KM7.conf).
 - The default Armbian `s4-s905y4-panfrost.dtbo` overlay replaces the GPU
   compatible with `arm,mali-bifrost`. Panfrost 1.2.0 now probes successfully
-  on real KM7 hardware; the userspace renderer still needs `glxinfo -B` proof.
+  on real KM7 hardware. Mesa 25.2.8 reports `Mali-G31 (Panfrost)` as its OpenGL
+  renderer and exposes OpenGL 3.1, confirming hardware rendering rather than
+  llvmpipe.
 - GPU DVFS table: 285.714/400/500/666.666/846 MHz. The last two table entries
-  both reference the 846 MHz configuration, exactly as in the Android 4 GB DTS.
+  in the Android DTS both reference the 846 MHz configuration; Linux exposes
+  the expected five unique frequencies at runtime.
 - Panfrost logs an initial clock of approximately 500 MHz. This is the DTS
   assigned boot clock, not evidence of a 500 MHz cap: the driver subsequently
-  installs the OPP table and uses the `simple_ondemand` devfreq governor. The
-  missing optional `mali` regulator warning is expected with this S4 DT, whose
-  GPU OPPs all request the same 1.15 V and which declares no `mali-supply`.
+  installs the complete OPP table and uses the `simple_ondemand` devfreq
+  governor. A live idle reading of 285.714 MHz confirms downscaling is active.
+  The missing optional `mali` regulator warning is expected with this S4 DT,
+  whose GPU OPPs all request the same 1.15 V and which declares no
+  `mali-supply`.
 
 ## GPU vs VPU — they are separate blocks, do not conflate them
 
@@ -104,7 +109,7 @@ gst-inspect-1.0 | grep -i aml            # amlvdec / amlvsink plugins
 proof that decode is on the VPU. A CPU-bound `ffmpeg`/`mpv` process at ~100%
 with an empty `vdec_status` means it fell back to software.
 
-### GPU — kernel driver confirmed; userspace renderer proof still required
+### GPU — kernel driver, Mesa renderer and devfreq confirmed
 
 Fenix proved that the unmodified vendor node compiled as Midgard-compatible,
 letting `mali_kbase` claim the device while XFCE rendered through llvmpipe.
@@ -112,8 +117,9 @@ This project enables Armbian's Panfrost overlay by default; decompiling the
 tracked overlay shows that it replaces the compatible with
 `"amlogic,meson-g12a-mali", "arm,mali-bifrost"`. Runtime KM7 logs confirm
 Panfrost probes the Mali-G31 ID `0x7093` and registers DRM successfully. That
-proves kernel binding, but not that Mesa/GNOME is rendering on the GPU rather
-than llvmpipe. Confirm userspace and runtime DVFS with:
+proves kernel binding; `glxinfo` additionally confirms Mesa renders through
+Mali-G31/Panfrost rather than llvmpipe. Devfreq exposes all five OPPs from
+285.714 through 846 MHz under `simple_ondemand`. Re-check with:
 
 ```bash
 glxinfo -B | grep -E 'OpenGL renderer|OpenGL version'
