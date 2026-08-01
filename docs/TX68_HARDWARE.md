@@ -179,16 +179,30 @@ Có `dram_para1` … `dram_para15` trong fex nhưng `select_mode = 0` nghĩa là
 > nó làm chuẩn.**
 | Dung lượng | **Thay đổi theo board** | ✅ đã gặp 14.7 GiB (`HAG4a2`) và 58.2 GiB (`CJNB4R`) |
 
-> ⚠️ **GPT vendor chia sẵn 2 partition sát nhau** (`phoenix-config/sys_partition.fex`):
-> rootfs (~5.7 GiB) rồi tới `userdata` (phần còn lại, ví dụ 52.5 GiB trên
-> board 58.2 GiB). `armbian-resize-filesystem` chỉ mở rộng được vào khoảng
-> trống *chưa phân vùng* — ở đây không có, nên rootfs **không tự lớn ra**, và
-> service resize luôn ở trạng thái `disabled` (đúng thiết kế, không phải lỗi).
-> Đã thêm service `tx68-userdata-mount` (đóng gói qua
-> `post_family_tweaks__tx68`) tự format ext4 + mount partition 2 vào `/data`
-> ở lần boot đầu, thay vì để trống phí. Muốn rootfs lớn hơn thật sự phải sửa
-> lại GPT trong `phoenix-config/sys_partition.fex` — **chưa làm**, vì đụng cấu
-> trúc phân vùng vendor, cần cân nhắc riêng trước khi động vào.
+> ✅ **eMMC tự expand đã sửa.** `sys_partition.fex.in` chỉ định nghĩa 1
+> partition (`rootfs`), nhưng máy thật luôn còn dư một partition `userdata`
+> phía sau (rác từ layout Android gốc, PhoenixSuit không ghi đè — ví dụ
+> rootfs 5.7 GiB + userdata 52.5 GiB trên board 58.2 GiB). `armbian-resize-
+> filesystem` bản gốc **cố tình từ chối** resize nếu có partition khác nằm
+> sau root (an toàn — tránh xoá nhầm dữ liệu người dùng), nên nó luôn
+> `disabled` trên board này, rootfs kẹt ở ~5.6 GiB.
+>
+> Đã port bản vá của `orangepi-build` (`orangepi-resize-filesystem`, đã kiểm
+> chứng trên phần cứng thật ở đó): thêm nhánh `BOARD == tx68` vào
+> `packages/bsp/common/usr/lib/armbian/armbian-resize-filesystem`:
+> 1. Tự xoá partition thừa (nếu chưa mount) bằng `sfdisk --delete` + `partx -d`
+>    — an toàn để làm ở đây vì flash ảnh này nghĩa là đã bỏ Android, và chỉ
+>    xoá cái CHƯA mount.
+> 2. Resize bằng `echo ", +" | sfdisk -N <partindex> <disk>` thay vì đoạn
+>    `fdisk` keystroke cũ — cách cũ chỉ đúng cho **MBR**, chạy trên GPT thì
+>    "thành công" mà **không hề đổi gì** (không báo lỗi, log vẫn ghi bình
+>    thường), đây chính là lý do ban đầu tưởng "không có khoảng trống" trong
+>    khi thật ra lệnh resize chưa từng thực sự chạy đúng.
+>
+> ⚠️ Hệ quả: rootfs giờ chiếm **toàn bộ eMMC**, không còn phân vùng thứ hai
+> nào để dùng riêng (không có `/data`). Nếu sau này cần tách dữ liệu khỏi hệ
+> điều hành, phải tự tạo lại một phân vùng con trong rootfs (LVM/subvolume),
+> không dựa vào GPT nữa.
 
 > ⚠️ **Không được hardcode `root=/dev/mmcblk0p1`.** Linux đánh số host MMC theo
 > **thứ tự probe**, không theo địa chỉ controller. TX68 có hai host: eMMC
@@ -506,12 +520,11 @@ này gặp hỏng bộ nhớ ngẫu nhiên, hãy quay lại chỗ này trước 
 | Bluetooth | ✅ **hoạt động** — `hci0` lên, HCI trả lời. Cần node `bt-lpm` + tắt driver marlin, xem §8 |
 | X11 mặc định | ✅ GDM ép Xorg (`WaylandEnable=false`) qua `post_family_tweaks__tx68` |
 | Console/desktop full auto-login | ✅ `DESKTOP_AUTOLOGIN` + `CONSOLE_AUTOLOGIN` đều `"yes"` trong `config/boards/tx68.conf` |
-| eMMC partition 2 (`userdata`) | ✅ tự format + mount `/data` qua service `tx68-userdata-mount` |
+| eMMC tự expand rootfs | ✅ vá `armbian-resize-filesystem` (nhánh `BOARD == tx68`), port từ orangepi-build |
 | USB0 host/OTG toggle | ❌ không có runtime toggle, biên dịch cứng trong DTB — xem §11 |
 | Khe thẻ SD | ❓ chưa rõ có tồn tại vật lý |
 | CVBS (`tv0`) | ❓ chưa thử |
 | SPDIF | ❓ chưa bật |
 | Vùng secure 80 MiB | ❓ xem mục 12 |
 | eMMC HS400 | Vendor chạy HS400; mainline dùng **DDR52 @ 52 MHz** (không phải HS200 — xem cảnh báo §6.1) |
-| eMMC rootfs không tự lớn | GPT vendor không chừa khoảng trống — xem cảnh báo §6.1. Muốn sửa tận gốc phải đổi `phoenix-config/sys_partition.fex` |
 | XFCE | Chưa làm — GNOME vẫn là DE mặc định, chỉ ép X11 |

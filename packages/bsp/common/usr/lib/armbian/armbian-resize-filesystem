@@ -48,6 +48,30 @@ do_expand_partition()
 	echo "partstart: ${partstart}s"
 	echo "partend: ${partend}s"
 
+	# TX68's PhoenixSuit image always defines exactly one partition
+	# ("rootfs" -- see external/config/phoenix/tx68-sys_partition.fex.in in
+	# orangepi-build). Anything with a higher partition number on a real
+	# board is a leftover from the vendor's original Android GPT layout
+	# (PARTLABEL="userdata", confirmed on real hardware) that Allwinner's
+	# flashing tool never overwrote. Flashing this image already means the
+	# board is leaving Android behind, so deleting anything past root is
+	# safe here as long as it isn't mounted. Ported from orangepi-build's
+	# orangepi-resize-filesystem, which was tested on real TX68 hardware.
+	if [[ ${BOARD} == tx68 ]]; then
+		for part_sysfs in /sys/class/block/${diskdevname}p*; do
+			[[ -e ${part_sysfs}/partition ]] || continue
+			local extra_partindex=$(cat ${part_sysfs}/partition)
+			local extra_partpath="/dev/${part_sysfs##*/}"
+			if [[ ${extra_partindex} -gt ${partindex} ]] &&
+				[[ -z $(findmnt -n -o TARGET --source ${extra_partpath}) ]]; then
+				echo -e "\nDeleting unused partition ${extra_partindex} (${extra_partpath})" >&2
+				sfdisk --no-reread --no-tell-kernel --delete \
+					${diskdev} ${extra_partindex} >&2
+				partx -d --nr ${extra_partindex} ${diskdev} >&2 || true
+			fi
+		done
+	fi
+
 	# check if it's the last partition in logical layout
 	# Note: the order may be different between partition table and logical layout
 	local list=$(parted $diskdev unit s print -sm | awk -F':' "NR>=3{if(\$2 - $partstart > 0){print \$1}}")
@@ -132,30 +156,47 @@ do_expand_partition()
 	cat /proc/partitions
 
 	# Start resizing
-	echo -e "\nExecuting fdisk:"
-	local partnum=$(parted $diskdev unit s print -sm | awk 'END{print NR-2}')
-	local fdisk_version=$(fdisk --version | awk '{print $NF}' | grep -oE "^[[:digit:]]\.[[:digit:]]+")
-	if [[ $partnum == 1 ]] && awk "BEGIN{exit ! ($fdisk_version >= 2.27 )}"; then
-		# if dealing with fdisk from util-linux 2.27+ we need a workaround for just 1 partition
-		# though it does not break anything - just prevents an "unexpected command" to fdisk
-		# https://github.com/igorpecovnik/lib/issues/353#issuecomment-224728506
-		{
-			echo d
-			echo n; echo p; echo $partindex; echo $partstart; echo $lastsector
-			echo w
-		} | fdisk $diskdev
+	if [[ ${BOARD} == tx68 ]]; then
+		# TX68's eMMC is GPT (Allwinner PhoenixSuit tooling), not the MBR
+		# layout the fdisk keystroke recipe below assumes. That recipe was
+		# observed (on real hardware, via orangepi-build) to leave the GPT
+		# partition entry unchanged -- silently, since its output only goes
+		# to the log and its exit status is never checked -- so rootfs
+		# stayed at the flashed ~5 GiB size forever. `parted resizepart`
+		# was tried too and refuses to touch a mounted root partition
+		# under --script no matter what's fed to stdin. sfdisk has no such
+		# refusal (it's the same mechanism cloud-init's growpart uses for
+		# GPT disks): `echo ", +" | sfdisk -N <partno> <dev>` (blank start
+		# = unchanged, size "+" = grow to fill available space) grows just
+		# that one partition and leaves the rest of the table untouched.
+		echo -e "\nResizing GPT partition ${partindex} with sfdisk:"
+		echo ", +" | sfdisk --no-reread -N ${partindex} $diskdev
 	else
-		{
-			echo d; echo $partindex
-			echo n; echo p; echo $partindex; echo $partstart; echo $lastsector
-			echo w
-		} | fdisk $diskdev
-	fi
-	if [[ -n $newpartition ]]; then
-		{
-			echo n; echo p; echo ; echo $(( $lastsector + 1 )); echo $newpartition
-			echo w
-		} | fdisk $diskdev
+		echo -e "\nExecuting fdisk:"
+		local partnum=$(parted $diskdev unit s print -sm | awk 'END{print NR-2}')
+		local fdisk_version=$(fdisk --version | awk '{print $NF}' | grep -oE "^[[:digit:]]\.[[:digit:]]+")
+		if [[ $partnum == 1 ]] && awk "BEGIN{exit ! ($fdisk_version >= 2.27 )}"; then
+			# if dealing with fdisk from util-linux 2.27+ we need a workaround for just 1 partition
+			# though it does not break anything - just prevents an "unexpected command" to fdisk
+			# https://github.com/igorpecovnik/lib/issues/353#issuecomment-224728506
+			{
+				echo d
+				echo n; echo p; echo $partindex; echo $partstart; echo $lastsector
+				echo w
+			} | fdisk $diskdev
+		else
+			{
+				echo d; echo $partindex
+				echo n; echo p; echo $partindex; echo $partstart; echo $lastsector
+				echo w
+			} | fdisk $diskdev
+		fi
+		if [[ -n $newpartition ]]; then
+			{
+				echo n; echo p; echo ; echo $(( $lastsector + 1 )); echo $newpartition
+				echo w
+			} | fdisk $diskdev
+		fi
 	fi
 
 	echo -e "\nExecuting partprobe:"

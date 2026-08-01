@@ -241,7 +241,22 @@ hành vi chuẩn của U-Boot, thứ mà kernel vendor không cần nhưng mainl
 
 - Chip WiFi/BT thực tế tự nhận diện qua SDIO là **AIC8801** (chip_rev U03/U04), KHÔNG phải AIC8800DC như tên thư mục driver trong Android BSP gợi ý — xác nhận bằng log SDIO probe trên phần cứng thật (`vid:0x5449 did:0x0145` → `PRODUCT_ID_AIC8801`). WiFi + Bluetooth đã chạy được (xem bảng lỗi ở trên); board TX68 khác có thể báo chip khác, đừng giả định lại mà hãy tra log.
 - USB0 (PHY0): mặc định đã ép **host mode** (`&usbotg { dr_mode = "host"; }`), tương đương "tắt" chế độ OTG debug kiểu Android. Đây là giá trị **biên dịch cứng trong DTB**, không có cách chuyển qua lại bằng biến U-Boot bootenv — driver `musb-sunxi`/`dwc2` không lộ sysfs role-switch trên board này (đã kiểm tra `/sys/class/*/role`, không tồn tại). Muốn đổi sang OTG/peripheral phải sửa `dr_mode` trong DTS rồi build lại DTB.
-- eMMC không tự expand: GPT vendor (`phoenix-config/sys_partition.fex`) chia sẵn 2 partition (rootfs ~5.7G + userdata ~52G) sát nhau, không còn khoảng trống để `armbian-resize-filesystem` mở rộng rootfs (service này ở trạng thái `disabled`, không phải lỗi). Đã thêm service `tx68-userdata-mount` để tự format + mount partition 2 vào `/data` thay vì để trống. Muốn rootfs lớn hơn thật sự phải sửa lại GPT trong `phoenix-config/sys_partition.fex` — chưa làm vì đụng tới cấu trúc phân vùng, cần quyết định riêng.
+- eMMC tự expand: **đã sửa**. GPT vendor (`phoenix-config/sys_partition.fex`)
+  chỉ định nghĩa 1 partition (`rootfs`), nhưng máy thật luôn còn dư một
+  partition `userdata` phía sau (rác từ layout Android gốc, PhoenixSuit không
+  ghi đè). `armbian-resize-filesystem` bản gốc **cố tình từ chối** resize nếu
+  có partition khác nằm sau root (an toàn — tránh xoá nhầm dữ liệu), nên nó
+  luôn `disabled` trên board này, rootfs kẹt ở ~5.6 GiB.
+  Đã port bản vá của `orangepi-build` (`orangepi-resize-filesystem`, đã test
+  trên máy thật): thêm nhánh `BOARD == tx68` vào
+  `packages/bsp/common/usr/lib/armbian/armbian-resize-filesystem` — tự xoá
+  partition thừa (nếu chưa mount) rồi resize bằng `sfdisk -N <part> ", +"`
+  (an toàn cho GPT — cách `fdisk` keystroke cũ chỉ đúng cho MBR, chạy xong mà
+  không hề đổi partition GPT, không báo lỗi). Không cần cấu hình gì thêm ở
+  `config/boards/tx68.conf`, service `armbian-resize-filesystem` đã tự bật
+  cho mọi board.
+  ⚠️ Hệ quả: **không còn phân vùng `userdata`/`/data` riêng** — rootfs chiếm
+  toàn bộ eMMC, giống hệt orangepi-build/KM7.
 - WiFi/BT: **đã chạy được** (SDIO WiFi scan/associate, BT hci0 lên). Chip SDIO
   là AIC8801 chứ không phải AIC8800DC (xem trên). Đã bật `radxa-aic8800` với
   `AIC8800_TYPE="sdio"` trong `config/boards/tx68.conf`; DT có `&mmc1` +
