@@ -1,24 +1,25 @@
 #!/bin/bash
-
+# tx68-fd650-clock — default FD650 front-panel behavior: rotate between the
+# current time and CPU temperature. Uses fd650ctl for all writes (single
+# place that knows the /dev/fd650_dev byte protocol -- see fd650ctl's
+# raw_write comment for why this can't be reimplemented with a naive printf).
 set -euo pipefail
 
-readonly FD650_DEVICE="/dev/fd650_dev"
-readonly FD650_BRIGHTNESS="${TX68_FD650_BRIGHTNESS:-3}"
+readonly FD650CTL="/usr/local/bin/fd650ctl"
+export FD650_BRIGHTNESS="${TX68_FD650_BRIGHTNESS:-1}"
 
-if [[ ! ${FD650_BRIGHTNESS} =~ ^[1-8]$ ]]; then
-	echo "Invalid TX68_FD650_BRIGHTNESS: ${FD650_BRIGHTNESS}" >&2
-	exit 1
-fi
+readonly TIME_SECONDS="${TX68_FD650_TIME_SECONDS:-3}"
+readonly TEMP_SECONDS="${TX68_FD650_TEMP_SECONDS:-2}"
 
 while true; do
-	now="$(date +%H%M%S)"
-	if ((10#${now:4:2} % 2)); then
-		dot="001"
-	else
-		dot="000"
-	fi
-	brightness="$(printf '%03o' "${FD650_BRIGHTNESS}")"
-	# One printf is intentional: the driver expects all six bytes in one write.
-	printf "%s\\${dot}\\${brightness}" "${now:0:4}"
-	sleep 1
-done >"${FD650_DEVICE}"
+	end=$(( $(date +%s) + TIME_SECONDS ))
+	while [[ $(date +%s) -lt ${end} ]]; do
+		"${FD650CTL}" time
+		sleep 1
+	done
+	end=$(( $(date +%s) + TEMP_SECONDS ))
+	while [[ $(date +%s) -lt ${end} ]]; do
+		"${FD650CTL}" temp
+		sleep 1
+	done
+done

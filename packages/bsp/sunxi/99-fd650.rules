@@ -1,0 +1,3 @@
+# FD650 front-panel display: let the local desktop user (in the "video"
+# group, same as DRM/framebuffer devices) control it without sudo.
+KERNEL=="fd650_dev", SUBSYSTEM=="misc", MODE="0660", GROUP="video"

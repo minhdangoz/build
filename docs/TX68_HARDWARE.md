@@ -535,7 +535,26 @@ sai mức.
 | Giao thức | Bit-bang 2 dây tự chế (không phải I2C/SPI chuẩn), driver toàn quyền điều khiển trực tiếp GPIO | ✅ đọc source driver |
 | Driver | `drivers/vfd/fd650.c`, port từ Android BSP (`hardware`/hạt nhân vendor), KHÔNG có trong cây mainline hay cây orangepi-build gốc | patch `patch/kernel/archive/sunxi-6.18/patches.armbian/drv-vfd-add-fd650.patch` |
 | Node char device | `/dev/fd650_dev` (misc device), ghi 6 byte 1 lần: 4 ký tự hiển thị + `dot_fg` + `brightness` | ✅ test viết "1234" hiện đúng trên máy thật |
-| Service đồng hồ | `tx68-fd650-clock.service` chạy `/usr/local/bin/tx68-fd650-clock`, ghi HH:MM + nháy dấu hai chấm mỗi giây | ✅ chạy ổn định trên máy thật, không crash/restart-loop |
+| Quyền truy cập | `crw-rw---- root video` qua `/etc/udev/rules.d/99-fd650.rules` — user desktop (đã ở group `video`) ghi được, không cần sudo | ✅ test bằng chính user `tx68`, không sudo |
+| CLI | `fd650ctl` (`/usr/local/bin/fd650ctl`) — `show`, `time`, `temp`, `custom`, `off`, `brightness N`, `test-brightness`, `daemon start/stop/status` | ✅ test tay từng subcommand trên máy thật |
+| Service mặc định | `tx68-fd650-clock.service` chạy `/usr/local/bin/tx68-fd650-clock` — **luân phiên hiện giờ ↔ nhiệt độ CPU** (mặc định 3s/2s, chỉnh qua `TX68_FD650_TIME_SECONDS`/`TEMP_SECONDS`), gọi `fd650ctl` cho mọi lần ghi (không tự viết lại logic byte-packing) | ✅ chạy ổn định, đúng chu kỳ trên máy thật |
+| Độ sáng | `brightness` 1–8 gửi trong field 3-bit của lệnh "system control" tới chip FD650 — **đây là toàn bộ dải điều khiển độ sáng mà chip hỗ trợ**, không có tham số analog/điện áp nào khác lộ ra qua giao thức 2 dây. Mặc định `1` (tối nhất, đã xác nhận đơn điệu tăng 1→8) | ✅ test tuần tự 8 mức trên máy thật sau khi sửa bug (xem 📌 dưới) |
+| Ký hiệu độ (°) | Ký tự `*` trong bảng mã (`CHAR_DEGREE = SEG_A\|SEG_B\|SEG_F\|SEG_G`, hình vuông nhỏ góc trên digit) — trước đó `*` map vào khoảng trắng, đã đổi | ✅ test hiện "50*C" đúng trên máy thật |
+
+> 📌 **Bug `printf` trong `fd650ctl` khiến brightness luôn cố định bất kể
+> giá trị yêu cầu.** `printf '%s\%s\%s' text dot_oct brightness_oct` —
+> `\` ở đây là ký tự literal trong format string, **không** áp dụng escape
+> lên giá trị octal đến từ tham số `%s` riêng (printf chỉ diễn giải
+> `\NNN` khi nó nằm trực tiếp trong chuỗi format, không phải trong giá trị
+> được substitute vào). Driver chỉ đọc tối đa 6 byte đầu
+> (`fd650_dev_write`: `count > 6` bị cắt), nên byte thật nhận được ở vị
+> trí `dot_fg`/`brightness` là rác (`\`, ký tự số đầu của chuỗi octal) —
+> `brightness` luôn rơi vào `default:` trong switch statement của
+> `Led_Show_650()`, không bao giờ đúng giá trị yêu cầu. Sửa bằng cách
+> dựng format string qua bash double-quote interpolation
+> (`printf "%s\\${dot_oct}\\${brightness_oct}" "${text}"`) để `\NNN` là
+> literal thật trong chuỗi format, đúng cách script `tx68-fd650-clock`
+> gốc đã làm (đó là lý do bản gốc luôn đúng còn CLI viết lại bị sai).
 
 > 📌 **Ba chỗ không tương thích kernel 6.18 phải sửa khi port từ bản vendor
 > 5.4** (tham khảo `/media/jimmy/WORK/AOSP/orangepi-build/external/patch/kernel/sun50iw9-current/board_tx68/0002-tx68-add-fd650-front-display-driver.patch`,
@@ -620,7 +639,7 @@ này gặp hỏng bộ nhớ ngẫu nhiên, hãy quay lại chỗ này trước 
 | X11 mặc định | ✅ GDM ép Xorg (`WaylandEnable=false`) qua `post_family_tweaks__tx68` |
 | Console/desktop full auto-login | ✅ đã sửa root cause: `armbian-firstlogin` (wizard first-login) **tự xoá** override autologin của `CONSOLE_AUTOLOGIN` ngay khi chạy — đây là cơ chế one-shot upstream, không phải bug DTS/config. Từ giờ board bỏ hẳn wizard: user `tx68`/mật khẩu `tx68` được tạo sẵn lúc build (`post_family_tweaks__tx68`), root cũng đặt `tx68` (`ROOTPWD` trong `tx68.conf`), GDM autologin thẳng vào `tx68` — không còn màn hình `tx68 login:` nào nữa |
 | eMMC tự expand rootfs | ✅ đã sửa root cause: nhánh `BOARD == tx68` dùng `partprobe` (bị kernel từ chối re-read bảng phân vùng khi đang mount root) rồi so sai kích thước → tự gắn cờ "cần reboot" dù đã resize xong. Đổi sang `partx -u` (như `growpart`) để cập nhật kernel view ngay lúc đang mount — không cần reboot nữa. Có thêm `systemctl reboot` tự động dự phòng nếu cờ vẫn bị set vì lý do khác, vì box này không có ai ngồi trước màn hình để bấm gì |
-| FD650 (màn hình 4 số mặt trước) | ✅ **hoạt động** — `/dev/fd650_dev` lên, test ghi "1234" hiện đúng, service đồng hồ chạy ổn định. Xem §11.2 |
+| FD650 (màn hình 4 số mặt trước) | ✅ **hoạt động đầy đủ** — driver, CLI `fd650ctl` (không cần sudo), service rotate time↔temp mặc định, ký hiệu độ. Tất cả đã test trên máy thật. Xem §11.2 |
 | USB0 host/OTG toggle | ❌ không có runtime toggle, biên dịch cứng trong DTB — xem §11 |
 | Khe thẻ SD | ❓ chưa rõ có tồn tại vật lý |
 | CVBS (`tv0`) | ❓ chưa thử |
