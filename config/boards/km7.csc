@@ -20,8 +20,8 @@ FORCE_BOOTSCRIPT_UPDATE="yes"
 
 OVERLAY_PREFIX="s4-s905y4"
 # This overlay replaces the vendor Midgard-compatible GPU binding with the
-# Bifrost binding that the in-tree Panfrost driver matches. GPU acceleration
-# still requires proof from the renderer on real KM7 hardware.
+# Bifrost binding that the in-tree Panfrost driver matches. Live KM7 hardware
+# identifies as Mali-G31 (GPU ID 0x7093), and Panfrost initializes successfully.
 DEFAULT_OVERLAYS="panfrost"
 
 # KM7 is mains-powered. Amlogic's four S905Y4 silicon-bin OPP tables all top

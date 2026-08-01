@@ -23,11 +23,11 @@ the current Armbian build/acceptance workflow.
 
 ## CPU
 
-- Android's `meson-s4.dtsi` declares 4x ARM Cortex-A55 (`arm,cortex-a55`),
-  PSCI enable-method, 64-bit (armv8). Public S905Y4 material instead says
-  Cortex-A35, so the exact core identity remains explicitly **unconfirmed**
-  until the physical KM7's MIDR is read; the DT string alone is not silicon
-  identification.
+- **4x ARM Cortex-A35**, confirmed on the physical KM7 by MIDR
+  `0x00000000411fd040` (Arm implementer `0x41`, part `0xd04`). Android's
+  `meson-s4.dtsi` incorrectly declares Cortex-A55; that DT compatible is stale
+  metadata and must not override the silicon ID. PSCI enable-method, 64-bit
+  (armv8).
 - All four silicon-bin OPP tables reach 2004 MHz. Depending on the secure
   firmware-selected table, that OPP requests 939–1009 mV; the S4 PWM regulator
   supports up to 1049 mV and the S4 system PLL contains the matching 2004 MHz
@@ -40,23 +40,29 @@ the current Armbian build/acceptance workflow.
 
 ## GPU
 
-- Android KM7 source does **not** support the previous "Mali G52 MP8 / gondul
-  25p0" claim. Its Bifrost node declares `num_of_pp = <2>` and `sc_mpp = <1>`,
-  while the KM7 kernel build selects Mali driver `r43p0`. The exact Mali product
-  (for example G31 versus G52) remains unconfirmed until the physical GPU ID is
-  read; do not infer it from the generic DT compatible.
+- **ARM Mali-G31**, confirmed live by Panfrost as GPU ID `0x7093`; the runtime
+  reports one shader core (`shader_present=0x1`) and one L2 slice
+  (`l2_present=0x1`). Android's Bifrost node declares `num_of_pp = <2>` and
+  `sc_mpp = <1>`, while the KM7 kernel build selects Mali driver `r43p0`. The
+  previous "Mali G52 MP8 / gondul 25p0" claim was wrong.
 - Display server: Wayland for desktop builds, GBM for server builds
   (`GPU_PLATFORM` in KM7.conf).
 - The default Armbian `s4-s905y4-panfrost.dtbo` overlay replaces the GPU
-  compatible with `arm,mali-bifrost`; real-hardware renderer proof is pending.
+  compatible with `arm,mali-bifrost`. Panfrost 1.2.0 now probes successfully
+  on real KM7 hardware; the userspace renderer still needs `glxinfo -B` proof.
 - GPU DVFS table: 285.714/400/500/666.666/846 MHz. The last two table entries
   both reference the 846 MHz configuration, exactly as in the Android 4 GB DTS.
+- Panfrost logs an initial clock of approximately 500 MHz. This is the DTS
+  assigned boot clock, not evidence of a 500 MHz cap: the driver subsequently
+  installs the OPP table and uses the `simple_ondemand` devfreq governor. The
+  missing optional `mali` regulator warning is expected with this S4 DT, whose
+  GPU OPPs all request the same 1.15 V and which declares no `mali-supply`.
 
 ## GPU vs VPU — they are separate blocks, do not conflate them
 
 This trips people up constantly on Amlogic, so state it plainly:
 
-- **GPU** = Mali Bifrost-family block (exact product ID pending live proof).
+- **GPU** = Mali-G31 Bifrost-family block, live-identified as ID `0x7093`.
   It provides 3D/GLES for the desktop and is irrelevant to video decoding.
 - **VPU/VDEC** = the Amlogic hardware video decoders driven by the `amvdec_*`
   drivers. This is what must handle H.264/H.265/VP9/AV1 so playback does not
@@ -98,18 +104,25 @@ gst-inspect-1.0 | grep -i aml            # amlvdec / amlvsink plugins
 proof that decode is on the VPU. A CPU-bound `ffmpeg`/`mpv` process at ~100%
 with an empty `vdec_status` means it fell back to software.
 
-### GPU — the binding is corrected; renderer proof is still required
+### GPU — kernel driver confirmed; userspace renderer proof still required
 
 Fenix proved that the unmodified vendor node compiled as Midgard-compatible,
 letting `mali_kbase` claim the device while XFCE rendered through llvmpipe.
 This project enables Armbian's Panfrost overlay by default; decompiling the
 tracked overlay shows that it replaces the compatible with
-`"amlogic,meson-g12a-mali", "arm,mali-bifrost"`. That closes the known DT
-match gap but does not substitute for a runtime test on KM7. Confirm with:
+`"amlogic,meson-g12a-mali", "arm,mali-bifrost"`. Runtime KM7 logs confirm
+Panfrost probes the Mali-G31 ID `0x7093` and registers DRM successfully. That
+proves kernel binding, but not that Mesa/GNOME is rendering on the GPU rather
+than llvmpipe. Confirm userspace and runtime DVFS with:
 
 ```bash
 glxinfo -B | grep -E 'OpenGL renderer|OpenGL version'
 dmesg | grep -Ei 'panfrost|mali|gpu'
+for d in /sys/class/devfreq/*; do
+    grep -q bifrost "$d/name" 2>/dev/null || continue
+    echo "$d"
+    cat "$d"/{name,governor,cur_freq,available_frequencies}
+done
 ```
 
 ## RAM
