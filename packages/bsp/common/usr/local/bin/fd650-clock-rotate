@@ -1,29 +1,31 @@
 #!/bin/bash
-# tx68-fd650-clock — FD650 front-panel: boot progress until NTP sync, then
+# fd650-clock-rotate — FD650 front-panel: boot progress until NTP sync, then
 # rotate between clock and CPU temperature.
 #
-# Boot sequence on this board (see docs/TX68_HARDWARE.md 11.2):
-#   1. U-Boot's own vendor driver flashes "8888" (not ours, can't change --
-#      board is secure-boot signed by a key we don't have).
-#   2. fd650.ko's probe() shows "0001" the moment the kernel driver binds.
-#   3. This service starts as soon as /dev/fd650_dev exists (see the unit's
-#      dev-fd650_dev.device ordering -- earlier than waiting for the whole
-#      of systemd-udev-settle) and takes over from there.
-#   4. Until the system clock is NTP-synced, show minutes:seconds since
+# Shared by TX68 and KM7 (see fd650ctl for the per-board backend detection
+# this script relies on). Board-specific boot sequence before this script
+# starts is documented per board:
+#   - TX68: docs/TX68_HARDWARE.md 11.2 (U-Boot "8888", kernel probe "0001").
+#   - KM7: docs/KM7_HARDWARE_SPECS.md (kernel probe "0001" once patched --
+#     see docs/FD650.md for status).
+# Both boards' systemd units start this the instant their fd650 device
+# appears (device-triggered, not after the whole of systemd-udev-settle)
+# and hand off identically from there:
+#   1. Until the system clock is NTP-synced, show minutes:seconds since
 #      boot as a live, moving "still alive" counter -- more informative
 #      than a fixed code, and it needs no separate milestones to invent
 #      meaning for.
-#   5. The instant NTP syncs (== the box actually has working internet),
+#   2. The instant NTP syncs (== the box actually has working internet),
 #      switch to rotating real time and CPU temperature. If NTP sync is
 #      ever lost again, fall back to the boot-progress counter
 #      automatically.
 set -euo pipefail
 
 readonly FD650CTL="/usr/local/bin/fd650ctl"
-export FD650_BRIGHTNESS="${TX68_FD650_BRIGHTNESS:-1}"
+export FD650_BRIGHTNESS="${FD650_BRIGHTNESS:-1}"
 
-readonly TIME_SECONDS="${TX68_FD650_TIME_SECONDS:-3}"
-readonly TEMP_SECONDS="${TX68_FD650_TEMP_SECONDS:-2}"
+readonly TIME_SECONDS="${FD650_TIME_SECONDS:-3}"
+readonly TEMP_SECONDS="${FD650_TEMP_SECONDS:-2}"
 
 ntp_synced() {
 	local state

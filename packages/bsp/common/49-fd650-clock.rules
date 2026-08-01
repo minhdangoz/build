@@ -1,0 +1,16 @@
+// Let the desktop user (video group -- same trust level as the fd650
+// device itself, see 99-fd650.rules / 99-fd650-km7.rules) start/stop/
+// restart just the FD650 clock service without a sudo password. Scoped to
+// these two exact units only -- org.freedesktop.systemd1.manage-units is
+// otherwise a blanket "control any system service" grant, which is not
+// something the video group should get. Shared by both boards (fd650ctl's
+// service_name() picks whichever of these actually exists on the running
+// image) instead of one rule file per board.
+polkit.addRule(function(action, subject) {
+	var allowed = ["tx68-fd650-clock.service", "km7-fd650-clock.service"];
+	if (action.id == "org.freedesktop.systemd1.manage-units" &&
+	    allowed.indexOf(action.lookup("unit")) !== -1 &&
+	    subject.isInGroup("video")) {
+		return polkit.Result.YES;
+	}
+});

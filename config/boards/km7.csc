@@ -134,6 +134,36 @@ function post_family_tweaks__km7_firstboot_identity() {
 	KM7_FIRSTBOOT_IDENTITY
 }
 
+# Front-panel FD650 (Amlogic's LED-class driver in the aggregate
+# amlogic-led.ko module -- /sys/class/leds/fd650/*, not the out-of-tree
+# chardev driver TX68 uses). fd650ctl and the rotation script are shared,
+# board-detecting code in packages/bsp/common/ (see docs/FD650.md and
+# config/boards/tx68.conf's matching install block) -- only the
+# device-specific glue below (udev rule, systemd unit device path) is
+# KM7-specific. There is no automatic packages/bsp/<family>/<board>/ ->
+# rootfs mirroring in this framework (checked lib/functions/ directly --
+# the only two consumers of packages/bsp/common/ are the separate
+# armbian-bsp-cli .deb artifact and one explicit `cp` in
+# distro-agnostic.sh), so every file below needs its own explicit install
+# line, same as TX68's board hook.
 function post_family_tweaks__km7_enable_front_panel() {
+	run_host_command_logged install -m 755 "${SRC}/packages/bsp/common/usr/local/bin/fd650ctl" "${SDCARD}/usr/local/bin/fd650ctl"
+	run_host_command_logged install -m 755 "${SRC}/packages/bsp/common/usr/local/bin/fd650-clock-rotate" "${SDCARD}/usr/local/bin/fd650-clock-rotate"
+
+	# MODE=/GROUP= on a udev rule line only affects a /dev node, which this
+	# LED-class device doesn't have (pure sysfs, no /dev node) -- confirmed
+	# on real hardware that MODE=/GROUP= alone leaves the sysfs attributes
+	# root:root 0644. RUN+= chmod/chgrp the actual attribute files instead.
+	# TAG+="systemd" makes systemd generate a device unit so the service
+	# below can be device-activated instead of waiting for
+	# systemd-udev-settle.
+	run_host_command_logged install -m 644 "${SRC}/packages/bsp/meson-s4t7/km7/99-fd650-km7.rules" "${SDCARD}/etc/udev/rules.d/99-fd650-km7.rules"
+
+	# Same polkit grant as TX68 (see tx68.conf), shared file: both boards'
+	# unit names are whitelisted in it so "video" group members can
+	# fd650ctl daemon start/stop/restart without sudo.
+	run_host_command_logged install -m 644 "${SRC}/packages/bsp/common/49-fd650-clock.rules" "${SDCARD}/etc/polkit-1/rules.d/49-fd650-clock.rules"
+
+	run_host_command_logged install -m 644 "${SRC}/packages/bsp/meson-s4t7/km7/etc/systemd/system/km7-fd650-clock.service" "${SDCARD}/lib/systemd/system/km7-fd650-clock.service"
 	chroot_sdcard systemctl --no-reload enable km7-fd650-clock.service
 }

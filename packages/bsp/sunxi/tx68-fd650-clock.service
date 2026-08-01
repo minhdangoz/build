@@ -8,8 +8,8 @@ BindsTo=dev-fd650_dev.device
 
 [Service]
 Type=simple
-Environment=TX68_FD650_BRIGHTNESS=1
-ExecStart=/usr/local/bin/tx68-fd650-clock
+Environment=FD650_BRIGHTNESS=1
+ExecStart=/usr/local/bin/fd650-clock-rotate
 Restart=on-failure
 RestartSec=2
 

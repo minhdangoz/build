@@ -537,8 +537,8 @@ sai mức.
 | Node char device | `/dev/fd650_dev` (misc device), ghi 6 byte 1 lần: 4 ký tự hiển thị + `dot_fg` + `brightness` | ✅ test viết "1234" hiện đúng trên máy thật |
 | Quyền truy cập | `crw-rw---- root video` qua `/etc/udev/rules.d/99-fd650.rules` — user desktop (đã ở group `video`) ghi được, không cần sudo | ✅ test bằng chính user `tx68`, không sudo |
 | CLI | `fd650ctl` (`/usr/local/bin/fd650ctl`) — `show`, `time`, `temp`, `custom`, `off`, `brightness N`, `test-brightness`, `daemon start/stop/restart/status` | ✅ test tay từng subcommand trên máy thật, **kể cả `daemon start/stop`** (không cần sudo — xem polkit rule dưới) |
-| Polkit rule | `49-fd650-clock.rules`: group `video` được `org.freedesktop.systemd1.manage-units` **chỉ cho đúng unit `tx68-fd650-clock.service`** (không cấp quyền systemd nói chung) | ✅ test `fd650ctl daemon stop/start` bằng user `tx68`, không sudo |
-| Service mặc định | `tx68-fd650-clock.service` chạy `/usr/local/bin/tx68-fd650-clock` — **luân phiên hiện giờ ↔ nhiệt độ CPU** khi đã có NTP (mặc định 3s/2s, chỉnh qua `TX68_FD650_TIME_SECONDS`/`TEMP_SECONDS`), gọi `fd650ctl` cho mọi lần ghi (không tự viết lại logic byte-packing) | ✅ chạy ổn định, đúng chu kỳ trên máy thật |
+| Polkit rule | shared `49-fd650-clock.rules`: group `video` được `org.freedesktop.systemd1.manage-units` **chỉ cho đúng hai unit FD650 của TX68/KM7** (không cấp quyền systemd nói chung) | ✅ test `fd650ctl daemon stop/start` bằng user `tx68`, không sudo |
+| Service mặc định | `tx68-fd650-clock.service` chạy shared `/usr/local/bin/fd650-clock-rotate` — **luân phiên hiện giờ ↔ nhiệt độ CPU** khi đã có NTP (mặc định 3s/2s, chỉnh qua `FD650_TIME_SECONDS`/`FD650_TEMP_SECONDS`), gọi shared `fd650ctl` cho mọi lần ghi (không tự viết lại logic byte-packing) | ✅ chạy ổn định, đúng chu kỳ trên máy thật |
 | Boot progress | U-Boot vendor hiện `8888` (không đổi được — ký secure boot, không có private key để build lại). Kernel driver hiện `0001` ngay khi probe (`fd650_driver_probe`, brightness=1). Service khởi động **ngay khi `/dev/fd650_dev` xuất hiện** (không đợi `systemd-udev-settle` toàn hệ thống — trigger qua `dev-fd650_dev.device`, cần `TAG+="systemd"` trong udev rule vì misc chardev không tự được tag) — hiện đồng hồ đếm thời gian đã boot `MM:SS` (nháy 2 chấm) cho tới khi `timedatectl show -p NTPSynchronized` = `yes`, lúc đó tự chuyển sang rotate giờ thật/nhiệt độ (nếu NTP mất sync lại thì tự quay về đếm) | ✅ verify timing thật: probe lúc 7.2s, service start lúc 10.7s (dmesg), format `MM:SS` đúng trên máy thật |
 | Độ sáng | `brightness` 1–8 gửi trong field 3-bit của lệnh "system control" tới chip FD650 — **đây là toàn bộ dải điều khiển độ sáng mà chip hỗ trợ**, không có tham số analog/điện áp nào khác lộ ra qua giao thức 2 dây. Mặc định `1` (tối nhất, đã xác nhận đơn điệu tăng 1→8) | ✅ test tuần tự 8 mức trên máy thật sau khi sửa bug (xem 📌 dưới) |
 | Ký hiệu độ (°) | Ký tự `*` trong bảng mã (`CHAR_DEGREE = SEG_A\|SEG_B\|SEG_F\|SEG_G`, hình vuông nhỏ góc trên digit) — trước đó `*` map vào khoảng trắng, đã đổi | ✅ test hiện "50*C" đúng trên máy thật |
@@ -555,8 +555,8 @@ sai mức.
 > `Led_Show_650()`, không bao giờ đúng giá trị yêu cầu. Sửa bằng cách
 > dựng format string qua bash double-quote interpolation
 > (`printf "%s\\${dot_oct}\\${brightness_oct}" "${text}"`) để `\NNN` là
-> literal thật trong chuỗi format, đúng cách script `tx68-fd650-clock`
-> gốc đã làm (đó là lý do bản gốc luôn đúng còn CLI viết lại bị sai).
+> literal thật trong chuỗi format. Fix này nằm ở shared `fd650ctl`, nên cả
+> TX68 và KM7 dùng chung một implementation.
 
 > 📌 **Ba chỗ không tương thích kernel 6.18 phải sửa khi port từ bản vendor
 > 5.4** (tham khảo `/media/jimmy/WORK/AOSP/orangepi-build/external/patch/kernel/sun50iw9-current/board_tx68/0002-tx68-add-fd650-front-display-driver.patch`,

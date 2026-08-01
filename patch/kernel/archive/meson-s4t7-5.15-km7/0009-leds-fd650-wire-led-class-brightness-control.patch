@@ -1,0 +1,90 @@
+From 2d2db6e13d27ae804645cc60a9355d5c810f33df Mon Sep 17 00:00:00 2001
+From: Jimmy <minhdangoz94@gmail.com>
+Date: Sun, 2 Aug 2026 16:30:00 +0700
+Subject: [PATCH] leds: fd650: wire LED class brightness control
+
+The driver registers an LED class device, so the LED core creates
+brightness and max_brightness attributes.  However, no brightness callback
+is registered and led_show_650() hard-codes FD650_SYS_ON_8 before every
+display update.  Consequently writes to brightness have no hardware effect
+and every subsequent display update forces maximum intensity again.
+
+Expose the FD650's eight native intensity levels through the LED class
+callback and retain the selected level across display updates.  Keep level
+8 as the probe default to preserve the driver's existing behaviour.  Level
+0 follows normal LED class semantics and switches the display off.
+
+The BL30 mailbox protocol does not expose intensity control, so reject
+brightness writes for that mode rather than claiming success.  KM7 uses the
+direct GPIO path.
+
+---
+ common_drivers/drivers/led/fd650.c | 31 ++++++++++++++++++++++++++++++-
+ 1 file changed, 30 insertions(+), 1 deletion(-)
+
+diff --git a/common_drivers/drivers/led/fd650.c b/common_drivers/drivers/led/fd650.c
+index 46a8f267b..b85df4e33 100644
+--- a/common_drivers/drivers/led/fd650.c
++++ b/common_drivers/drivers/led/fd650.c
+@@ -41,6 +41,7 @@ struct fd650_bus {
+ 	 */
+ 	int udelay;
+ 	 /* sda, scl */
++	enum led_brightness brightness;
+ 	unsigned int gpios[2];
+ 	struct led_classdev cdev;
+ 	int (*get_sda)(struct fd650_bus *bus);
+@@ -159,6 +160,31 @@ u8 fd650_read(struct fd650_bus *bus)
+ 	return keycode;
+ }
+ 
++static u16 fd650_brightness_cmd(enum led_brightness brightness)
++{
++	if (brightness == LED_OFF)
++		return FD650_SYS_OFF;
++	if (brightness >= 8)
++		return FD650_SYS_ON_8;
++
++	return FD650_SYS_ON | (brightness << 4);
++}
++
++static int fd650_brightness_set_blocking(struct led_classdev *led_cdev,
++					 enum led_brightness brightness)
++{
++	struct fd650_bus *bus = container_of(led_cdev,
++						struct fd650_bus, cdev);
++
++	if (bus->use_bl30_ctrl)
++		return -EOPNOTSUPP;
++
++	bus->brightness = brightness;
++	fd650_write(bus, fd650_brightness_cmd(brightness));
++
++	return 0;
++}
++
+ void led_show_650(struct fd650_bus *bus, char *str, unsigned char sec_flag, unsigned char lock)
+ {
+ 	int i, length;
+@@ -174,7 +200,7 @@ void led_show_650(struct fd650_bus *bus, char *str, unsigned char sec_flag, unsi
+ 	for (i = 0; i < length; i++)
+ 		data[i] = led_get_code(str[i]);
+ 
+-	fd650_write(bus, FD650_SYS_ON_8);
++	fd650_write(bus, fd650_brightness_cmd(bus->brightness));
+ 	fd650_write(bus, FD650_DIG0 | (u8)data[0] | FD650_DOT);
+ 	if (sec_flag)
+ 		fd650_write(bus, FD650_DIG1 | (u8)data[1] | FD650_DOT);
+@@ -414,6 +440,10 @@ static int fd650_probe(struct platform_device *pdev)
+ 	bus->set_sda = fd650_sda_set;
+ 	bus->set_scl = fd650_scl_set;
+ 	bus->cdev.name = pdev->dev.of_node->name;
++	bus->brightness = 8;
++	bus->cdev.brightness = bus->brightness;
++	bus->cdev.max_brightness = 8;
++	bus->cdev.brightness_set_blocking = fd650_brightness_set_blocking;
+ 	ret = led_classdev_register(&pdev->dev, &bus->cdev);
+ 	if (ret < 0) {
+ 		dev_err(&pdev->dev, "failed to register for %s\n",
+-- 
+2.34.1

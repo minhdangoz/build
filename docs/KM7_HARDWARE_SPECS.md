@@ -267,6 +267,53 @@ echo "0 boot" > /sys/class/leds/fd650/fd650_display
 echo 1       > /sys/class/leds/fd650/fd650_clear      # shows "****"
 ```
 
+### Userspace tooling — shared with TX68 ✅
+
+TX68 (H618) carries the same physical FD650 module on a completely
+different driver (out-of-tree chardev, see `docs/TX68_HARDWARE.md` §11.2).
+Rather than duplicate the CLI/rotation logic per board, `fd650ctl` and
+`fd650-clock-rotate` (`packages/bsp/common/usr/local/bin/`) detect the
+backend at runtime (`/dev/fd650_dev` vs
+`/sys/class/leds/fd650/fd650_display`) and dispatch accordingly — see
+`docs/FD650.md` for the full writeup and `fd650ctl`'s own `raw_write()`
+comment for the per-backend protocol differences.
+
+- **No sudo needed**: `99-fd650-km7.rules` chgrp/chmod's the sysfs
+  attributes to `video` (MODE=/GROUP= on the udev rule line itself doesn't
+  work here — confirmed on real hardware — because this is a pure LED-class
+  sysfs device with no `/dev` node for those keys to apply to; `RUN+=`
+  chmod/chgrp is what actually works) and tags the device `systemd` so
+  `km7-fd650-clock.service` can be device-activated. A matching polkit rule
+  (`packages/bsp/common/49-fd650-clock.rules`) lets `video` group members
+  run `fd650ctl daemon start/stop/restart` without a password too, scoped to
+  exactly this unit (and TX68's).
+- **Default behavior**: boot-progress counter (minutes:seconds since boot)
+  until `timedatectl show -p NTPSynchronized` reports `yes`, then rotates
+  real clock ↔ CPU temperature. Verified end-to-end on real hardware
+  (device-triggered service start at ~15s post-boot, zero restarts).
+- **Brightness fixed in the build patchset**:
+  `0009-leds-fd650-wire-led-class-brightness-control.patch` registers the
+  LED-class `brightness_set_blocking` callback, exposes levels 0–8, maps
+  levels 1–8 to the FD650's native intensity commands, and retains the
+  selected level across every display update instead of hard-coding level
+  8. The shared `fd650ctl` therefore controls brightness identically on
+  TX68 and KM7; level 0 follows LED-class semantics and turns the display
+  off.
+- **Known remaining driver quirk, confirmed on real hardware, not yet patched**:
+  `fd650_display_store()` calls `led_show_650(bus, str, colon_on, 1)` with
+  the `lock` parameter hard-coded to `1`, and `led_show_650()` itself
+  unconditionally OR's `FD650_DOT` onto the 4th digit's command regardless
+  of any parameter. Net effect: digits 3 and 4 always show a decimal point
+  that has nothing to do with the requested colon — visually confirmed
+  (`echo "1 12ab" > fd650_display` shows stray dots after `a` and `b`).
+  **Not yet fixed** — needs a follow-up patch to `common_drivers/drivers/led/
+  fd650.c`. The same follow-up can add a `'*'` degree-symbol entry in
+  `bcd_decode_tab[]` (`0x63` = segments a+b+f+g, identical bit convention to
+  TX68's `CHAR_DEGREE` since both drivers share the same vendor segment
+  encoding), and a `"0001"` display call right after a successful probe
+  (currently the panel stays blank from boot until the systemd service
+  starts writing to it — TX68's equivalent driver already does this).
+
 **`GPIOD_8` collision worth knowing:** on FD628 boards `GPIOD_8` is the
 front-panel strobe, and U-Boot's `upgrade_key` in `km7.h` polls exactly that
 pin (`if gpio input GPIOD_8`). That is more evidence the GPIOD_8 upgrade key

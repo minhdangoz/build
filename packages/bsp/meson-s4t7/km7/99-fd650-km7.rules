@@ -1,0 +1,15 @@
+# KM7 FD650 front-panel display (Amlogic LED-class driver, no /dev node --
+# pure sysfs). Let the local desktop user (video group, same as
+# TX68's 99-fd650.rules) control it without sudo.
+#
+# MODE=/GROUP= on the rule line only affect a /dev node, which this device
+# doesn't have (pure sysfs, no misc/char device). Use RUN+= to chmod/chgrp
+# the actual sysfs attribute files instead -- confirmed on real hardware
+# that MODE=/GROUP= alone leaves them root:root 0644.
+#
+# TAG+="systemd" makes systemd generate a device unit for this so
+# km7-fd650-clock.service can be device-activated the moment it appears,
+# instead of waiting for the whole of systemd-udev-settle.
+SUBSYSTEM=="leds", KERNEL=="fd650", TAG+="systemd", \
+	RUN+="/bin/chgrp video /sys%p/fd650_display /sys%p/brightness", \
+	RUN+="/bin/chmod 664 /sys%p/fd650_display /sys%p/brightness"

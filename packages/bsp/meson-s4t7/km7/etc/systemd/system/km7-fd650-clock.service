@@ -1,13 +1,19 @@
 [Unit]
-Description=KM7 FD650 front-panel clock
-After=systemd-udev-settle.service
-ConditionPathExists=/sys/class/leds/fd650/fd650_display
+Description=KM7 FD650 front-panel status (boot progress -> clock/temp)
+# Start the instant the LED-class device exists -- not after the whole of
+# systemd-udev-settle. Mirrors TX68's tx68-fd650-clock.service, same reasoning.
+After=sys-devices-platform-fd650-leds-fd650.device
+BindsTo=sys-devices-platform-fd650-leds-fd650.device
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/km7-fd650-clock
+Environment=FD650_BRIGHTNESS=1
+ExecStart=/usr/local/bin/fd650-clock-rotate
 Restart=on-failure
 RestartSec=2
 
 [Install]
-WantedBy=multi-user.target
+# WantedBy a .device unit (not multi-user.target) is what makes this
+# device-triggered: systemd starts it the moment the fd650 LED device
+# appears, instead of waiting for multi-user.target.
+WantedBy=sys-devices-platform-fd650-leds-fd650.device
