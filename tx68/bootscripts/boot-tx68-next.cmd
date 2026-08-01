@@ -115,7 +115,7 @@ fi
 # initrd packaging changes in a way worth telling apart at a glance in the
 # "Kernel command line" log line -- cheaper than comparing SHA-256/filenames
 # across a long debugging session with many near-identical image builds.
-setenv tx68_bootscript_ver "16-audit"
+setenv tx68_bootscript_ver "17-perf-gov"
 
 # Left to itself the driver takes the TV's preferred mode. The attached TV
 # lists 3840x2160 ten times before anything else (see
