@@ -1,0 +1,38 @@
+From 3e8436a0bcba410f66ffda92e5a60d547eb4d44f Mon Sep 17 00:00:00 2001
+From: Jimmy <minhdangoz94@gmail.com>
+Date: Thu, 30 Jul 2026 16:26:35 +0700
+Subject: [PATCH 6/6] arm64: configs: kvims: enable CONFIG_AMLOGIC_W1
+
+KM7's on-board WiFi/BT is an Amlogic W1 (SDIO 0x8888:0x8888), not a
+Broadcom part despite the DT node's brcm,bcm4329-fmac compatible.
+Driver added in the main linux tree at
+drivers/net/wireless/amlogic_w1/, beside bcmdhd/.
+
+BCMDHD stays enabled: other Khadas boards on this shared defconfig do
+carry Broadcom parts, and dhd probing and failing against a W1 SDIO ID
+is harmless.
+
+Change-Id: Ic4f21bcdade943432621b1def532cb29c3ecf1e0
+---
+ arch/arm64/configs/kvims_defconfig | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/common_drivers/arch/arm64/configs/kvims_defconfig b/common_drivers/arch/arm64/configs/kvims_defconfig
+index 1b4c386d2..341aeb901 100644
+--- a/common_drivers/arch/arm64/configs/kvims_defconfig
++++ b/common_drivers/arch/arm64/configs/kvims_defconfig
+@@ -927,6 +927,11 @@ CONFIG_USB_GOBI_NET=y
+ CONFIG_BCMDHD=m
+ CONFIG_BCMDHD_FW_PATH="/lib/firmware/brcm/"
+ CONFIG_BCMDHD_NVRAM_PATH="/lib/firmware/brcm/"
++# KM7's on-board WiFi/BT is an Amlogic W1 (SDIO 0x8888:0x8888), not the
++# Broadcom part BCMDHD expects - BCMDHD stays enabled above since other
++# Khadas boards on this defconfig do carry Broadcom parts, and dhd probing
++# and failing against a W1 is harmless (see docs/KM7_S905Y4_BRINGUP_AND_RECOVERY.md).
++CONFIG_AMLOGIC_W1=m
+ CONFIG_INPUT_SPARSEKMAP=m
+ CONFIG_INPUT_MOUSEDEV=m
+ CONFIG_INPUT_MOUSEDEV_PSAUX=y
+-- 
+2.34.1
+

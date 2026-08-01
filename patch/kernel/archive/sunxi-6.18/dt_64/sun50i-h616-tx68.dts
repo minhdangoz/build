@@ -137,6 +137,27 @@
 	cpu-supply = <&reg_dcdc2>;
 };
 
+/*
+ * sun50i-h616-cpu-opp.dtsi's 1512 MHz OPP (opp-supported-hw = 0x2a) only
+ * covers speed bins 1/3/5 -- this board reports speed0 (dmesg:
+ * "sun50i_cpufreq_nvmem: Using CPU speed bin speed0"), so mainline caps it
+ * at 1416 MHz. The vendor's own Android BSP DVFS table for this exact chip
+ * (sun50iw9p1/H618, sun50iw9.dtsi in the Android 5.4 kernel tree) DOES
+ * define speed0 (there called "a0", same "default/weakest" bin) at
+ * 1512 MHz @ 1150000 uV -- that's a factory-validated number, not a guess.
+ * Re-open the shared opp-1512000000 node here (board-scoped, not editing
+ * the shared dtsi) to add that voltage and add speed0 to the supported-hw
+ * mask: 0x2a | bit0 (speed0) = 0x2b. Requires reg_dcdc2's
+ * regulator-max-microvolt raised to 1150000 above. See
+ * docs/TX68_HARDWARE.md §2.
+ */
+&cpu_opp_table {
+	opp-1512000000 {
+		opp-microvolt-speed0 = <1150000>;
+		opp-supported-hw = <0x2b>;
+	};
+};
+
 &de {
 	status = "okay";
 };
@@ -423,7 +444,19 @@
 			reg_dcdc2: dcdc2 {
 				regulator-always-on;
 				regulator-min-microvolt = <810000>;
-				regulator-max-microvolt = <1100000>;
+				/*
+				 * Raised from the mainline-default 1100000 to 1150000
+				 * to cover the 1512 MHz OPP enabled for this board's
+				 * speed0 bin below (&cpu_opp_table override further
+				 * down this file). 1150000 is not a guess -- it's the
+				 * vendor's own factory DVFS table value for this exact
+				 * speed bin at this exact frequency (opp@1512000000,
+				 * opp-microvolt-a0 = <1150000>, sun50iw9.dtsi, Android
+				 * BSP linux-5.4 tree). PMIC (AXP1530 dcdc2) allows up
+				 * to 1540000, so this stays well inside its range.
+				 * See docs/TX68_HARDWARE.md §2.
+				 */
+				regulator-max-microvolt = <1150000>;
 				regulator-ramp-delay = <200>;
 				regulator-name = "vdd-cpu";
 			};

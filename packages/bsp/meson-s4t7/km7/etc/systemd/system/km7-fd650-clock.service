@@ -1,0 +1,13 @@
+[Unit]
+Description=KM7 FD650 front-panel clock
+After=systemd-udev-settle.service
+ConditionPathExists=/sys/class/leds/fd650/fd650_display
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/km7-fd650-clock
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

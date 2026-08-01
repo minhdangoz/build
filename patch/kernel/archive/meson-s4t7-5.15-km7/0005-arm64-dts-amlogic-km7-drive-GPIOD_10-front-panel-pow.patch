@@ -1,0 +1,70 @@
+From 43fd9d3057b8f81f5cdc83611f50f489b27d3ffc Mon Sep 17 00:00:00 2001
+From: Jimmy <minhdangoz94@gmail.com>
+Date: Thu, 30 Jul 2026 12:04:33 +0700
+Subject: [PATCH 5/6] arm64: dts: amlogic: km7: drive GPIOD_10
+ (front-panel/power LED)
+
+The vendor Android KM7.dtb asserts GPIOD_10 high at boot from its
+"ledlight" node (led_name = "power_led", led_gpio = <&gpio 34 0>,
+led_active = <1>). common_drivers 5.15 has no "amlogic, ledlight"
+driver, and the only other consumer of that pin in km7.dts was the
+aw9523b reset for a chip that is not fitted - so once aw9523b was
+disabled nothing drove GPIOD_10 at all.
+
+Reproduce the vendor's boot-time assert with leds-gpio
+(CONFIG_LEDS_GPIO=y). Unlike a fixed regulator this also exposes
+/sys/class/leds/panel_power/brightness, so the pin can be toggled at
+runtime while probing the panel instead of reflashing per attempt.
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+Change-Id: Icc20b5e8888b83ca1764b3408e153a7211e42edb
+---
+ arch/arm64/boot/dts/amlogic/km7.dts | 32 +++++++++++++++++++++++++++++
+ 1 file changed, 32 insertions(+)
+
+diff --git a/common_drivers/arch/arm64/boot/dts/amlogic/km7.dts b/common_drivers/arch/arm64/boot/dts/amlogic/km7.dts
+index 7eef961de..9ec97c7bc 100644
+--- a/common_drivers/arch/arm64/boot/dts/amlogic/km7.dts
++++ b/common_drivers/arch/arm64/boot/dts/amlogic/km7.dts
+@@ -815,6 +815,38 @@
+ 		sda-gpios = <&gpio GPIOD_6 GPIO_ACTIVE_HIGH>;
+ 		scl-gpios = <&gpio GPIOD_7 GPIO_ACTIVE_HIGH>;
+ 	};
++
++	/* GPIOD_10 - front-panel / power-LED enable.
++	 *
++	 * The vendor Android KM7.dtb drives this pin from its "ledlight" node:
++	 *     ledlight { status = "okay"; power_gpio_0 = <&gpio_b>;
++	 *                gpio_b { led_name = "power_led";
++	 *                         led_gpio = <&gpio 34 0>;   // 34 = GPIOD_10
++	 *                         led_active = <1>; led_type = "B"; }; }
++	 * i.e. asserted high at boot. common_drivers 5.15 has no "amlogic,
++	 * ledlight" driver, so nothing here reproduced that and the pin was
++	 * left floating after aw9523b (which had claimed it as a reset line for
++	 * a chip that does not exist on this board) was disabled - the FD650
++	 * module reads as unpowered.
++	 *
++	 * leds-gpio (CONFIG_LEDS_GPIO=y, built in) gives the same boot-time
++	 * assert via default-state, and unlike a fixed regulator it also
++	 * exposes /sys/class/leds/panel_power/brightness so the rail can be
++	 * toggled at runtime while probing the panel - no reflash per attempt.
++	 *
++	 * If GPIOD_10 turns out to drive only a discrete power LED rather than
++	 * the panel supply, this node is harmless and can stay.
++	 */
++	panel_power_leds {
++		compatible = "gpio-leds";
++		status = "okay";
++
++		panel_power {
++			label = "panel_power";
++			gpios = <&gpio GPIOD_10 GPIO_ACTIVE_HIGH>;
++			default-state = "on";
++		};
++	};
+ };
+ 
+ &pwm_ij {
+-- 
+2.34.1
+

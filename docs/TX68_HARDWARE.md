@@ -51,12 +51,59 @@ Quy trình dựng ảnh nằm ở [`tx68/README.md`](../tx68/README.md); chuỗi
 |---|---|---|
 | Tần số boot (Boot0/U-Boot) | **1008 MHz** | 📄 `sys_config.fex` `[target] boot_clock = 1008` |
 | Speed bin eFuse | **speed0** | ✅ `sun50i_cpufreq_nvmem: Using CPU speed bin speed0` |
-| OPP khả dụng (speed0) | 480 · 720 · 936 · 1008 · 1104 · 1200 · 1320 · **1416** MHz | ✅ `scaling_available_frequencies` |
+| OPP khả dụng (speed0), mainline gốc | 480 · 720 · 936 · 1008 · 1104 · 1200 · 1320 · 1416 MHz | ✅ `scaling_available_frequencies` |
+| OPP khả dụng (speed0), sau OC | 480 · 720 · 936 · 1008 · 1104 · 1200 · 1320 · 1416 · **1512** MHz | 📄 override trong `sun50i-h616-tx68.dts` (mục 2.1) |
 | Điện áp ở 1416 MHz | 1100 mV | ✅ `vdd-cpu = 1100000uV` |
+| Điện áp ở 1512 MHz (speed0) | **1150 mV** | 📄 vendor `sun50iw9.dtsi` `opp@1512000000 opp-microvolt-a0`, xem mục 2.1 |
+| Governor mặc định | **performance** (ghim 1416/1512 MHz, không ramp) | 📄 `config/boards/tx68.conf` `post_family_config__tx68_performance_governor`; family `sun50iw9.conf` mặc định `ondemand` — TV box cắm điện lưới, không cần tiết kiệm pin |
 | Nhiệt tới hạn CPU | 115 °C | 📄 `board.dts` `cpu_crit` |
-| Nhiệt lúc chạy GNOME | ~57 °C | ✅ `/sys/class/thermal` |
+| Nhiệt lúc chạy GNOME (idle) | ~57 °C | ✅ `/sys/class/thermal` |
+| Nhiệt dưới tải 4-core (stress-ng, governor performance @1416MHz) | ~68 °C đỉnh | ✅ đo trên máy thật, 3 phút `stress-ng --cpu 4`, 0 lỗi, không throttle |
 
 > ⚠️ **`regulator-ramp-delay` trên `vdd-cpu` là bắt buộc.** Xem mục 4.
+
+### 2.1 Mở khoá OPP 1512 MHz cho speed0 (OC)
+
+Bảng OPP mainline (`sun50i-h616-cpu-opp.dtsi`) có sẵn entry `opp-1512000000`
+nhưng `opp-supported-hw = 0x2a` chỉ cho speed bin 1/3/5, **không có speed0** —
+TX68 dừng ở 1416 MHz vì lý do đó, không phải vì silicon không chạy được cao hơn.
+
+Bảng DVFS gốc của vendor cho **đúng chip này** (sun50iw9p1/H618,
+`/home/jimmy/AOSP/pp618/longan/kernel/linux-5.4/arch/arm64/boot/dts/sunxi/sun50iw9.dtsi`,
+dòng ~270) lại có OPP 1512 MHz cho bin `a0` (tên vendor của bin "mặc định/yếu
+nhất" — tương ứng `speed0` bên mainline, cùng ý nghĩa "using CPU speed bin
+speed0" thấy trong dmesg) ở **1150 mV**:
+
+```dts
+opp@1512000000 {
+	opp-hz = /bits/ 64 <1512000000>;
+	opp-microvolt-a0 = <1150000>;
+	opp-microvolt-a1 = <1100000>;
+	opp-microvolt-a3 = <1100000>;
+	opp-supported-hw = <0xb>;
+};
+```
+
+**Đây là số liệu vendor factory-validated cho đúng bin, không phải đoán.** Đã
+kiểm tra toàn bộ bảng DVFS vendor cho H618 — 1512 MHz là tần số cao nhất
+vendor từng định nghĩa cho chip này, không có entry 1608 MHz hay cao hơn ở bất
+kỳ đâu trong cây Android BSP hay `orangepi-build`. Vì vậy **1512 MHz là trần
+OC an toàn có nguồn**, đi cao hơn sẽ là đoán số — vi phạm quy tắc dự án
+([[tx68-verify-before-build]]).
+
+Đã áp dụng trong `patch/kernel/archive/sunxi-6.18/dt_64/sun50i-h616-tx68.dts`:
+1. `reg_dcdc2.regulator-max-microvolt`: 1100000 → **1150000** (PMIC vendor cho
+   phép tới 1540000, vẫn còn dư nhiều — mục 4).
+2. Re-open `&cpu_opp_table { opp-1512000000 { ... } }` ngay trong file board
+   (không sửa dtsi dùng chung — chỉ ảnh hưởng TX68), thêm
+   `opp-microvolt-speed0 = <1150000>` và đổi `opp-supported-hw` từ `0x2a` →
+   `0x2b` (thêm bit0 = speed0).
+
+Xác minh trên máy thật (governor performance, 1416 MHz, trước khi lên 1512):
+3 phút `stress-ng --cpu 4`, 0 lỗi, không RCU stall, nhiệt đỉnh ~68 °C (còn dư
+>45 °C tới `cpu_crit`). Benchmark nền (`sysbench cpu --cpu-max-prime=20000
+--threads=4 --time=60`) tại 1416 MHz: **1084.52 events/sec** — dùng làm mốc so
+sánh sau khi lên 1512 MHz.
 
 ## 3. GPU
 
@@ -77,7 +124,7 @@ Không có chân ngắt (`/* irq line nc */` trong `board.dts`) — chỉ `wakeu
 | Rail | Tên | Cấp cho | Vendor cho phép | DTS ta đặt | Nguồn |
 |---|---|---|---|---|---|
 | dcdc1 | `vdd-gpu-sys` | GPU + SYS | 500–3400 mV | 810–990 mV | ✅ 960 mV |
-| dcdc2 | `vdd-cpu` | CPU | 500–1540 mV | 810–1100 mV | ✅ 1100 mV |
+| dcdc2 | `vdd-cpu` | CPU | 500–1540 mV | 810–**1150** mV | ✅ 1100 mV @1416MHz, 1150 mV @1512MHz OC (mục 2.1) |
 | dcdc3 | `vdd-dram` | DRAM | 500–1840 mV | **1500 mV cố định** | ✅ 1500 mV |
 | aldo1 | `vcc-1v8` | PLL, bank PC/PG, HDMI, vqmmc | 500–3500 mV | 1800 mV | ✅ |
 | dldo1 | `vcc-3v3` | VCC-IO, bank PA/PH/PI, vmmc | 500–3500 mV | 3300 mV | ✅ |
@@ -203,6 +250,18 @@ Có `dram_para1` … `dram_para15` trong fex nhưng `select_mode = 0` nghĩa là
 > nào để dùng riêng (không có `/data`). Nếu sau này cần tách dữ liệu khỏi hệ
 > điều hành, phải tự tạo lại một phân vùng con trong rootfs (LVM/subvolume),
 > không dựa vào GPT nữa.
+
+> 📌 **Patch chưa nằm trong build image hiện tại.** Kiểm tra trên board thật
+> (`tx68@192.168.1.14`, build `80b66c3` / `26.08.0-trunk`) ngày 2026-08-01:
+> `grep tx68 /usr/lib/armbian/armbian-resize-filesystem` **rỗng** — patch
+> `orangepi-resize-filesystem` mô tả ở trên chưa được đưa vào build này, và
+> `armbian-resize-filesystem.service` là `disabled`/`inactive`. Rootfs kẹt ở
+> 5.7 GiB, `df -h /` chỉ còn 198 MiB trống (97%) trước khi được xử lý thủ
+> công bằng đúng quy trình đã mô tả (`sfdisk --delete` p2 → `sfdisk -N 1`
+> `", +"` → `partx -u` → `resize2fs` online). Sau đó `/` = 58G, còn trống 52G.
+> **Kết luận: patch cần được xác nhận có mặt trong pipeline build** (hoặc
+> board này build từ trước khi patch được thêm) — đừng giả định máy mới flash
+> ra sẽ tự expand, kiểm tra `df -h /` sau lần boot đầu.
 
 > ⚠️ **Không được hardcode `root=/dev/mmcblk0p1`.** Linux đánh số host MMC theo
 > **thứ tự probe**, không theo địa chỉ controller. TX68 có hai host: eMMC

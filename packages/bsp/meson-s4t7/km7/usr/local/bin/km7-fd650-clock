@@ -1,0 +1,14 @@
+#!/bin/bash
+# The fd650 driver powers the display only after a sysfs write; keep HH:MM on
+# the front panel and blink the colon once a second.
+set -uo pipefail
+
+readonly FD650=/sys/class/leds/fd650/fd650_display
+[ -w "$FD650" ] || { echo "$FD650 not writable" >&2; exit 1; }
+
+while true; do
+	now="$(date +%H%M%S)"
+	if (( 10#${now:4:2} % 2 )); then colon=1; else colon=0; fi
+	printf '%s %s\n' "$colon" "${now:0:4}" > "$FD650" || exit 1
+	sleep 1
+done

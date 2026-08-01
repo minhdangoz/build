@@ -1,0 +1,78 @@
+From 0ade708b3a38339d22248aaa47c0581c4b764ec6 Mon Sep 17 00:00:00 2001
+From: Jimmy <minhdangoz94@gmail.com>
+Date: Wed, 29 Jul 2026 22:04:59 +0700
+Subject: [PATCH 2/6] arm64: dts: amlogic: km7: disable the unpopulated DVB
+ front-end
+
+The vendor Android KM7.dtb ships dvb-extern, dvb-demux and aml_dtv_demod
+disabled, and KM7's dtbo.img only adds dummy-battery/dummy-charger, so
+the tuner is genuinely absent on this unit. Enabling them cost i2c3/i2c4
+probes that can only NAK, the PDID_S4_DEMOD power domain, the dvb_s_ts0
+pinmux claim, and a 4.5 MB dvb-demux reg window covering the peripheral
+aperture the HDMI TX register bases sit in.
+
+Change-Id: Ie4b029ce0042725c8a7cd448de57c11e7176cac4
+---
+ arch/arm64/boot/dts/amlogic/km7.dts | 23 ++++++++++++++++++++---
+ 1 file changed, 20 insertions(+), 3 deletions(-)
+
+diff --git a/common_drivers/arch/arm64/boot/dts/amlogic/km7.dts b/common_drivers/arch/arm64/boot/dts/amlogic/km7.dts
+index 1e1ac770b..0e5692668 100644
+--- a/common_drivers/arch/arm64/boot/dts/amlogic/km7.dts
++++ b/common_drivers/arch/arm64/boot/dts/amlogic/km7.dts
+@@ -229,10 +229,25 @@
+ 		tv_mode = <0>;/*1:enable ;0:disable*/
+ 	};
+ 
++	/* The DVB front-end is NOT populated on this unit. The vendor Android
++	 * KM7.dtb (device/amlogic/KM7-kernel/5.4/KM7.dtb, s4_s905y4 "4g" entry,
++	 * decompiled) ships dvb-extern, dvb-demux and aml_dtv_demod all with
++	 * status = "disabled", and KM7's dtbo.img only adds dummy-battery /
++	 * dummy-charger, so nothing re-enables them at runtime.
++	 *
++	 * Leaving them enabled costs real boot work for hardware that isn't
++	 * there: i2c3/i2c4 probes of r836/av2018/cxd2856 that can only NAK, the
++	 * PDID_S4_DEMOD power domain, the dvb_s_ts0 pinmux claim, and a
++	 * dvb-demux reg window of 0xfe000000+0x480000 that blankets the whole
++	 * peripheral aperture the HDMI TX register bases sit in.
++	 *
++	 * The wiring is kept so a tuner-populated variant only needs the status
++	 * properties flipped back to "okay".
++	 */
+ 	dvb-extern {
+ 		compatible = "amlogic, dvb-extern";
+ 		dev_name = "dvb-extern";
+-		status = "okay";
++		status = "disabled";
+ 
+ 		/* dvb hardware main power. */
+ 		dvb_power_gpio = <&gpio GPIOZ_5 GPIO_ACTIVE_HIGH>;
+@@ -289,10 +304,11 @@
+ 		tuner3_lt_out = <1>;
+ 	};
+ 
++	/* Disabled with dvb-extern above - see that comment. */
+ 	dvb-demux {
+ 		compatible = "amlogic sc2, dvb-demux";
+ 		dev_name = "dvb-demux";
+-		status = "okay";
++		status = "disabled";
+ 
+ 		reg = <0x0 0xfe000000 0x0 0x480000>;
+ 
+@@ -385,10 +401,11 @@
+ 		pps-enable = <1>;
+ 	};
+ 
++	/* Disabled with dvb-extern above - see that comment. */
+ 	aml_dtv_demod {
+ 		compatible = "amlogic, ddemod-s4";
+ 		dev_name = "aml_dtv_demod";
+-		status = "okay";
++		status = "disabled";
+ 		/* diseqc_name = "sgm_41286"; */
+ 		pinctrl-names="if_agc_pins", "if_agc2_pins";
+ 		pinctrl-0=<&dtvdemod_if_agc_pins>;
+-- 
+2.34.1
+

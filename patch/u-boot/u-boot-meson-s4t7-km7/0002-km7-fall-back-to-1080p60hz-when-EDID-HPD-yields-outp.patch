@@ -1,0 +1,70 @@
+From 79f2fbdb96ee7f53d1178d32d2834fe29873252c Mon Sep 17 00:00:00 2001
+From: Jimmy <minhdangoz94@gmail.com>
+Date: Wed, 29 Jul 2026 21:58:34 +0700
+Subject: [PATCH 2/2] km7: fall back to 1080p60hz when EDID/HPD yields
+ outputmode=none
+
+init_display_base ends up setting outputmode from hdmimode ("none") in
+cmd/amlogic/cmd_vout.c:vout_hdmi_hpd() whenever HPD reads low, so the
+kernel receives "vout=none,enable hdmimode=none". Linux cannot recover
+from that: hdmitx rejects the mode, vout_serve forces the output invalid,
+and every DRM atomic commit on VPP-0 ends in flip_done/vblank timeouts.
+
+Force a usable mode in that case only; a valid EDID still wins.
+
+Change-Id: I1fe7c0ebc33058f906a4e1731d0739dabea564f4
+---
+ board/khadas/configs/km7.h | 30 ++++++++++++++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+
+diff --git a/board/khadas/configs/km7.h b/board/khadas/configs/km7.h
+index 658d063ced..ca2fdd67fa 100644
+--- a/board/khadas/configs/km7.h
++++ b/board/khadas/configs/km7.h
+@@ -107,6 +107,29 @@
+ 
+ #include <config_distro_bootcmd.h>
+ 
++/* The "init_display" override below adds an outputmode=none fallback.
++ * init_display_base runs "hdmitx hpd; hdmitx get_parse_edid; hdmitx edid".
++ * When HPD reads low, cmd/amlogic/cmd_vout.c:vout_hdmi_hpd() does
++ *     env_set("outputmode", hdmimode);        <- hdmimode's default is "none"
++ *     env_set("hdmichecksum", "0x00000000");
++ * and both get_parse_edid ("HDMI HPD low, no need parse EDID") and edid
++ * ("HDMI cable is NOT connected") return before ever calling
++ * select_best_resolution(). storeargs_base then emits
++ *     vout=none,enable hdmimode=none hdmichecksum=0x00000000
++ * which is exactly what a failing KM7 boot shows on the kernel cmdline.
++ * Linux cannot recover from that: hdmitx prints "hdmitx_validate_vmode
++ * validate none fail", vout_serve prints "no matched vout_init mode none,
++ * force to invalid", the VPP-0 CRTC never gets a mode, and every DRM atomic
++ * commit ends in "flip_done timed out" / "vblank wait timed out".
++ *
++ * So when the auto path gives up, force 1080p60hz instead of shipping "none"
++ * to the kernel. A valid EDID still wins; this branch only runs on failure.
++ *
++ * Keep the whole override inside the macro free of comments - the macro is
++ * backslash-continued, and line splicing happens before comment removal, so
++ * a comment line without a trailing backslash silently truncates the env.
++ */
++
+ /* fdtfile below is deliberately NOT derived from CONFIG_DEFAULT_DEVICE_TREE:
+  * that macro ("meson-s4-ap222") is U-Boot's OWN embedded devicetree for its
+  * own hardware bring-up, not the kernel's. The kernel builds km7.dtb
+@@ -241,6 +264,13 @@
+             "\0"\
+ 		"init_display="\
+ 			"run init_display_base;"\
++			"if test ${outputmode} = none; then "\
++				"echo hdmi: no EDID/HPD, forcing 1080p60hz;"\
++				"setenv hdmimode 1080p60hz;"\
++				"setenv outputmode 1080p60hz;"\
++				"setenv colorattribute 444,8bit;"\
++				"vout output ${outputmode};"\
++			"fi;"\
+ 			"\0"\
+ 		"storage_param="\
+ 			"setenv bootargs ${bootargs} ${emmc_quirks}; "\
+-- 
+2.34.1
+

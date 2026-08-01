@@ -206,11 +206,23 @@ function kernel_dtb_only_build() {
 	# Copy the bin dtb for convenience
 	display_alert "Kernel DTB-only for development" "Copying binary ${BOOT_FDT_FILE}" "info"
 	declare binary_dtb="${kernel_work_dir}/arch/${KERNEL_SRC_ARCH}/boot/dts/${fdt_dir}/${fdt_file}"
+	# Some vendor kernels (currently Khadas 5.15) build their DTBs from a
+	# separately fetched common_drivers tree. dtbs_install handles that layout,
+	# but this development-only convenience copy historically assumed every DTB
+	# lived directly under the kernel's arch/ tree.
+	declare common_drivers_binary_dtb="${kernel_work_dir}/common_drivers/arch/${KERNEL_SRC_ARCH}/boot/dts/${fdt_dir}/${fdt_file}"
+	if [[ ! -f "${binary_dtb}" && -f "${common_drivers_binary_dtb}" ]]; then
+		binary_dtb="${common_drivers_binary_dtb}"
+	fi
 	declare binary_dtb_dest="${SRC}/output/${fdt_dir}-${fdt_file}--${KERNEL_MAJOR_MINOR}-${BRANCH}.dtb"
 	run_host_command_logged cp -v "${binary_dtb}" "${binary_dtb_dest}"
 
 	# Kernel build should produce a preprocessed version of all DTS files built into DTBs at arch/arm64/boot/dts/${fdt_dir}/.${fdt_file}.dts.tmp
 	declare preprocessed_fdt_source="${kernel_work_dir}/arch/${KERNEL_SRC_ARCH}/boot/dts/${fdt_dir}/.${fdt_file}.dts.tmp"
+	declare common_drivers_preprocessed_fdt_source="${kernel_work_dir}/common_drivers/arch/${KERNEL_SRC_ARCH}/boot/dts/${fdt_dir}/.${fdt_file}.dts.tmp"
+	if [[ ! -f "${preprocessed_fdt_source}" && -f "${common_drivers_preprocessed_fdt_source}" ]]; then
+		preprocessed_fdt_source="${common_drivers_preprocessed_fdt_source}"
+	fi
 
 	# Check it exists, or bail
 	if [[ ! -f "${preprocessed_fdt_source}" ]]; then

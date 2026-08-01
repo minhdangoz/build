@@ -1,0 +1,82 @@
+From c192fb434fc8e40355c3cff99a751b4b98dae588 Mon Sep 17 00:00:00 2001
+From: Jimmy <minhdangoz94@gmail.com>
+Date: Thu, 30 Jul 2026 00:38:12 +0700
+Subject: [PATCH 3/6] arm64: dts: amlogic: km7: add the FD650 front-panel
+ display
+
+KM7 carries a 4-digit 7-segment module on the front-panel header. The
+vendor Android KM7.dtb describes all three variants on the same two pins
+(fd655_dev/fd650_dev 2-wire clk GPIOD_7 dat GPIOD_6, fd628_dev 3-wire with
+stb GPIOD_8) and enables the 3-wire fd628; this unit has the 2-wire FD650.
+
+The 5.15 common_drivers binding is not the vendor 5.4 one: drivers/led/
+fd650.c matches "amlogic,fd650" and takes sda-gpios/scl-gpios, so a
+verbatim copy of the vendor node would never probe. Enable
+CONFIG_AMLOGIC_LEDS_FD650 so fd650.o is linked into amlogic-led.ko.
+
+Change-Id: Ibbee521e5469db96000bc102b3b5f77c02130c12
+---
+ arch/arm64/boot/dts/amlogic/km7.dts | 34 +++++++++++++++++++++++++++++
+ arch/arm64/configs/kvims_defconfig  |  1 +
+ 2 files changed, 35 insertions(+)
+
+diff --git a/common_drivers/arch/arm64/boot/dts/amlogic/km7.dts b/common_drivers/arch/arm64/boot/dts/amlogic/km7.dts
+index 0e5692668..1eb1fa03d 100644
+--- a/common_drivers/arch/arm64/boot/dts/amlogic/km7.dts
++++ b/common_drivers/arch/arm64/boot/dts/amlogic/km7.dts
+@@ -781,6 +781,40 @@
+ 			     &gpio  GPIOD_3  GPIO_ACTIVE_HIGH>;
+ 		detect_mode = <0>;/*0:polling mode, 1:irq mode*/
+ 	};
++
++	/* Front-panel 4-digit 7-segment display (FD650), the module visible on
++	 * the KM7 photo in docs/image.png.
++	 *
++	 * The vendor Android KM7.dtb describes all three front-panel variants
++	 * on the same two-pin header - fd655_dev, fd650_dev (both 2-wire,
++	 * clk GPIOD_7 / dat GPIOD_6) and fd628_dev (3-wire, same two pins plus
++	 * stb GPIOD_8) - and enables fd628_dev, the 3-wire part. This unit has
++	 * the 2-wire FD650, so fd650 is what gets enabled here.
++	 *
++	 * Note the binding is NOT the vendor 5.4 one. common_drivers 5.15 ships
++	 * a rewritten drivers/led/fd650.c that matches "amlogic,fd650" (not
++	 * "amlogic,fd650_dev") and takes sda-gpios/scl-gpios (not
++	 * fd650_gpio_dat/fd650_gpio_clk). Copying the vendor node verbatim
++	 * gives a node that never probes.
++	 *
++	 * "mboxes"/"use-bl30-ctrl" are deliberately absent: those hand the
++	 * display to the BL30 co-processor. Direct GPIO bit-banging from Linux
++	 * is what we want, and it is also the only mode in which the
++	 * fd650_sec sysfs attribute works.
++	 *
++	 * Do not bother tuning fd650-gpio,delay-us - fd650_probe() has an
++	 * inverted check ("if (!ret) bus->udelay = DEFAULT_UDELAY;") that
++	 * overwrites the DT value with the default whenever the read succeeds.
++	 *
++	 * GPIOD_7/GPIOD_6 are free in this DTS: gpio_keypad uses GPIOD_2/D_3
++	 * and the aw9523b reset uses GPIOD_10.
++	 */
++	fd650: fd650 {
++		compatible = "amlogic,fd650";
++		status = "okay";
++		sda-gpios = <&gpio GPIOD_6 GPIO_ACTIVE_HIGH>;
++		scl-gpios = <&gpio GPIOD_7 GPIO_ACTIVE_HIGH>;
++	};
+ };
+ 
+ &pwm_ij {
+diff --git a/common_drivers/arch/arm64/configs/kvims_defconfig b/common_drivers/arch/arm64/configs/kvims_defconfig
+index a9cdd73a0..1b4c386d2 100644
+--- a/common_drivers/arch/arm64/configs/kvims_defconfig
++++ b/common_drivers/arch/arm64/configs/kvims_defconfig
+@@ -2051,6 +2051,7 @@ CONFIG_AMLOGIC_LEDS_TLC59116=y
+ CONFIG_AMLOGIC_LEDS_AW9523B=y
+ CONFIG_AMLOGIC_LEDS_STATE=y
+ CONFIG_AMLOGIC_LEDS_DCON=y
++CONFIG_AMLOGIC_LEDS_FD650=y
+ CONFIG_AMLOGIC_DVB_CI=m
+ CONFIG_AMLOGIC_USBCAM=m
+ CONFIG_AMLOGIC_HWSPINLOCK=m
+-- 
+2.34.1
+

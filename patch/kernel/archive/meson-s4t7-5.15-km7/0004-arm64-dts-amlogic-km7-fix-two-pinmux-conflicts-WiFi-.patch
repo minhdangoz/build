@@ -1,0 +1,140 @@
+From 7a9821d4f8e1918df01eca10798dcd6796978064 Mon Sep 17 00:00:00 2001
+From: Jimmy <minhdangoz94@gmail.com>
+Date: Thu, 30 Jul 2026 11:19:19 +0700
+Subject: [PATCH 4/6] arm64: dts: amlogic: km7: fix two pinmux conflicts (WiFi
+ 32k, FD650)
+
+Both live-verified on hardware.
+
+1. GPIOX_16, WiFi vs pwm_ef. km7.dts gave &pwm_ef pinctrl-0 =
+   <&pwm_e_pins1> ("pwm_e_x" = GPIOX_16). meson-s4.dtsi already points
+   &aml_wifi's pinctrl at that same group, because GPIOX_16 carries the
+   32.768 kHz clock the SDIO WiFi part needs to leave reset. pwm_ef
+   claimed it first:
+
+     pin GPIOX_16 already requested by fe05c000.pwm; cannot claim for aml_wifi
+     pin-64 (aml_wifi) status -22
+     aml_wifi aml_wifi: Error applying setting, reverse things back
+
+   and the WiFi part never clocked, so SDIO enumerated nothing:
+
+     [mmc]: sdio vendor is 0x0
+     meson-gx-mmc fe088000.sdio: 5 [0x0], TIMEOUT[0x2800]
+
+   kvim1s.dts leaves &pwm_ef without a pinctrl for this reason. Drop it;
+   the controller stays "okay" so wifi_pwm_conf can still request the
+   channel through the PWM API.
+
+2. GPIOD_6/GPIOD_7, FD650 vs i2c1. i2c1_pins2 is "i2c1_sda_d"/
+   "i2c1_scl_d" - the front-panel pins:
+
+     pin GPIOD_6 already requested by fe068000.i2c; cannot claim for
+       periphs-banks:460
+     fd650 fd650: Can't get fd650 gpios! Error: -22
+
+   Nothing is populated on that bus: tlc59116@0x60 is disabled in the
+   vendor Android KM7.dtb (its Linux driver binds without reading the
+   chip, so /sys/class/leds/i2c_leds proves nothing), and aw9523b@0x5b
+   is absent from the vendor blob entirely and reports "there is no
+   aw9523 ret=-22" on real hardware. Disable the bus and both devices.
+
+   The vendor gets away with enabling i2c1 on these pins because its 5.4
+   fd628 driver bit-bangs GPIOs by name and bypasses pinctrl ownership;
+   the 5.15 fd650 driver uses of_get_named_gpio()/devm_gpio_request()
+   and is refused.
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+Change-Id: I28b8e8582196b72e469ae95459d290b9f3ed5330
+---
+ arch/arm64/boot/dts/amlogic/km7.dts | 52 ++++++++++++++++++++++++++---
+ 1 file changed, 47 insertions(+), 5 deletions(-)
+
+diff --git a/common_drivers/arch/arm64/boot/dts/amlogic/km7.dts b/common_drivers/arch/arm64/boot/dts/amlogic/km7.dts
+index 1eb1fa03d..7eef961de 100644
+--- a/common_drivers/arch/arm64/boot/dts/amlogic/km7.dts
++++ b/common_drivers/arch/arm64/boot/dts/amlogic/km7.dts
+@@ -835,8 +835,32 @@
+ 	clock-frequency = <300000>;
+ };
+ 
++/* i2c1 is disabled so the FD650 front panel can have its pins.
++ *
++ * i2c1_pins2 is the "i2c1_sda_d"/"i2c1_scl_d" group = GPIOD_6/GPIOD_7 - the
++ * same two pins the front-panel header uses. Live-verified on hardware:
++ *   pin GPIOD_6 already requested by fe068000.i2c; cannot claim for
++ *     periphs-banks:460
++ *   fd650 fd650: Can't get fd650 gpios! Error: -22
++ *   fd650: probe of fd650 failed with error -22
++ *
++ * Nothing is actually populated on this bus:
++ *   - tlc59116 @0x60 is status = "disabled" in the vendor Android KM7.dtb.
++ *     Its Linux driver binds without reading the chip, so the resulting
++ *     /sys/class/leds/i2c_leds node is not evidence the part exists.
++ *   - aw9523b @0x5b is not in the vendor blob at all, and on real hardware
++ *     its driver reports "aw9523_i2c_probe: there is no aw9523 ret=-22".
++ *
++ * The vendor gets away with enabling i2c1 on these pins because its 5.4
++ * fd628 driver bit-bangs the GPIOs by name and bypasses pinctrl's pin
++ * ownership; the 5.15 fd650 driver goes through of_get_named_gpio() +
++ * devm_gpio_request() and is refused.
++ *
++ * If a KM7 variant does populate the RGB LED drivers, re-enable this node
++ * and drop the fd650 node instead - the two cannot coexist.
++ */
+ &i2c1 {
+-	status = "okay";
++	status = "disabled";
+ 	pinctrl-names="default";
+ 	pinctrl-0=<&i2c1_pins2>;
+ 	clock-frequency = <300000>; /* default 100k */
+@@ -844,7 +868,7 @@
+ 	tlc59116: tlc59116@60 {
+ 		compatible = "amlogic,tlc59116_led";
+ 		reg = <0x60>;
+-		status = "okay";
++		status = "disabled";
+ 		led0 {
+ 			default_colors = <0 0 0>;
+ 			r_io_number = <0>;
+@@ -876,7 +900,7 @@
+ 	aw9523: aw9523_led@5b {
+ 		compatible = "amlogic,aw9523b_led";
+ 		reg = <0x5b>;
+-		status = "okay";
++		status = "disabled";
+ 		reset-gpio = <&gpio GPIOD_10 GPIO_ACTIVE_HIGH>;
+ 		platform = <4>;
+ 
+@@ -1688,9 +1712,27 @@
+ 	hostwake-gpios = <&gpio GPIOX_19 GPIO_ACTIVE_HIGH>;
+ };
+ 
++/* Do NOT add pinctrl-0 = <&pwm_e_pins1> here.
++ *
++ * pwm_e_pins1 is the "pwm_e_x" group = GPIOX_16, which is the 32.768 kHz
++ * clock the SDIO WiFi part needs to come out of reset (see wifi_pwm_conf,
++ * which drives it through &pwm_ef channel 0). meson-s4.dtsi already gives
++ * &aml_wifi a pinctrl entry for that same group, and whoever claims the pin
++ * first wins.
++ *
++ * Live-verified on hardware: with pwm_ef claiming it, the kernel logged
++ *   pin GPIOX_16 already requested by fe05c000.pwm; cannot claim for aml_wifi
++ *   pin-64 (aml_wifi) status -22
++ *   aml_wifi aml_wifi: Error applying setting, reverse things back
++ * the WiFi part never got its clock, and the SDIO bus enumerated nothing:
++ *   [mmc]: sdio vendor is 0x0
++ *   meson-gx-mmc fe088000.sdio: 5 [0x0], TIMEOUT[0x2800]   (CMD5/CMD55/CMD1)
++ *
++ * kvim1s.dts leaves &pwm_ef without a pinctrl for exactly this reason and its
++ * WiFi works. The controller still needs to be "okay" so wifi_pwm_conf can
++ * request the channel through the PWM API; only the pinmux claim moves.
++ */
+ &pwm_ef {
+-	pinctrl-0 = <&pwm_e_pins1>;
+-	pinctrl-names = "default";
+ 	status = "okay";
+ };
+ 
+-- 
+2.34.1
+
