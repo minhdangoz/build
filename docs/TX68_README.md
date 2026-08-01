@@ -44,13 +44,29 @@ Hai thư mục này bị `.gitignore` vì chứa **khoá ký secure boot** của
 | `tx68/android-pack/` | `pack_out/`, `pctools-linux/`, `keys/`, `sign_config/` | `/home/jimmy/AOSP/pp618` (cây Android BSP) |
 | `tx68/uboot-debs/` | `linux-u-boot-next-tx68_0.1.0_arm64.deb` | orangepi-build |
 
+Hai thư mục private ở trên được backup bằng `age` trong private release
+`minhdangoz/tx68-secure-pack`; chúng không được commit plaintext. Trên clean
+checkout, restore bằng `./tx68/scripts/tx68-restore-secure-pack.sh`. Source và
+revision bất biến của kernel, vendor U-Boot và AIC8801 nằm tại
+`config/boards/tx68-km7-source-lock.inc`; xem `docs/SOURCE_OWNERSHIP.md`.
+
 Không có chúng thì không ký được TOC1 → máy không boot. Đây là thứ duy nhất
 không thể tái tạo từ repo này.
 
 ### Nguồn U-Boot vendor
 
-Mặc định đọc từ `/media/jimmy/WORK/AOSP/orangepi-build/u-boot/v2018.05-h618`
-(chỉ đọc, không ghi). Đổi bằng biến `TX68_UBOOT_SRC`.
+Mặc định script clone snapshot U-Boot vendor **2018.05** bất biến từ
+[`minhdangoz/tx68-u-boot`](https://github.com/minhdangoz/tx68-u-boot), commit
+[`d7e300ad8182`](https://github.com/minhdangoz/tx68-u-boot/commit/d7e300ad8182b8fbd15f66bcb45c4e62ac23a3a2),
+vào `cache/sources/tx68-u-boot`. Có thể dùng cây local để phát triển bằng biến
+`TX68_UBOOT_SRC`, nhưng production build mặc định luôn quay lại commit đã pin.
+
+Kernel là Linux **6.18.41**, nhánh Armbian `current`, lấy từ snapshot
+[`minhdangoz/linux-stable@457936105aed`](https://github.com/minhdangoz/linux-stable/commit/457936105aed97a31778991bff97e8a0346d1bff).
+AIC8801 firmware/DKMS lấy từ release cố định
+[`minhdangoz/aic8800-packages`](https://github.com/minhdangoz/aic8800-packages/releases/tag/5.0%2Bgit20260123.5f7be68d-7)
+và kiểm tra SHA256 trước khi dùng. Full hash và upstream provenance nằm tại
+[`config/boards/tx68-km7-source-lock.inc`](../config/boards/tx68-km7-source-lock.inc).
 
 ### Công cụ host
 

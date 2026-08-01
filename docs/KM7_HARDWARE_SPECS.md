@@ -130,6 +130,12 @@ for d in /sys/class/devfreq/*; do
     cat "$d"/{name,governor,cur_freq,available_frequencies}
 done
 ```
+### Verify the live CPU governor
+
+```bash
+cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor
+cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_cur_freq
+```
 
 ## RAM
 

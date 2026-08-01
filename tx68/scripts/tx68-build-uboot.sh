@@ -17,9 +17,10 @@ see docs/SECURE_BOOT.md) and every vendor sun50iw9 defconfig is 32-bit ARM.
 So the vendor tree is what gets patched.
 
 Environment:
-  TX68_UBOOT_SRC   Pristine vendor U-Boot tree to copy from
-                   (default: /media/jimmy/WORK/AOSP/orangepi-build/u-boot/v2018.05-h618).
-                   It is only ever read; the build happens in TX68_UBOOT_WORK.
+  TX68_UBOOT_SRC   Optional vendor U-Boot tree override. By default the exact
+                   owned snapshot in tx68-km7-source-lock.inc is cloned into
+                   cache/sources/tx68-u-boot. The source is only ever read;
+                   the build happens in TX68_UBOOT_WORK.
   TX68_UBOOT_WORK  Scratch build tree (default: ../tx68-uboot-build next to
                    this armbian-build checkout). Wiped and recreated each run.
   TX68_BOOTDELAY   Seconds to wait at "Hit any key to stop autoboot"
@@ -41,7 +42,8 @@ if [[ $# -gt 1 ]]; then
 fi
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-UBOOT_SRC="${TX68_UBOOT_SRC:-/media/jimmy/WORK/AOSP/orangepi-build/u-boot/v2018.05-h618}"
+source "${SRC}/../config/boards/tx68-km7-source-lock.inc"
+UBOOT_SRC="${TX68_UBOOT_SRC:-${SRC}/../cache/sources/tx68-u-boot}"
 WORK="${TX68_UBOOT_WORK:-$(cd "${SRC}/../.." && pwd)/tx68-uboot-build}"
 BOOTDELAY="${TX68_BOOTDELAY:-3}"
 BASE_DEB="${TX68_BASE_DEB:-${SRC}/uboot-debs/linux-u-boot-next-tx68_0.1.0_arm64.deb}"
@@ -53,12 +55,20 @@ SYS_CONFIG="${SRC}/pack-uboot/bin/sys_config/sys_config_tx68.fex"
 # The vendor tree is a 32-bit ARM U-Boot -- see docs/SECURE_BOOT.md.
 CROSS="arm-linux-gnueabi-"
 
-required_commands=(rsync patch make dpkg-deb python3 sed "${CROSS}gcc")
+required_commands=(git rsync patch make dpkg-deb python3 sed "${CROSS}gcc")
 for command_name in "${required_commands[@]}"; do
 	command -v "${command_name}" >/dev/null ||
 		{ echo "ERROR: missing host command: ${command_name}" >&2; exit 1; }
 done
 
+if [[ -z "${TX68_UBOOT_SRC:-}" ]]; then
+	if [[ ! -d "${UBOOT_SRC}/.git" ]]; then
+		git clone --no-checkout "${TX68_UBOOT_SOURCE}" "${UBOOT_SRC}"
+	fi
+	git -C "${UBOOT_SRC}" fetch origin "${TX68_UBOOT_REF#commit:}"
+	git -C "${UBOOT_SRC}" checkout --detach --force "${TX68_UBOOT_REF#commit:}"
+	git -C "${UBOOT_SRC}" clean -ffd
+fi
 [[ -d "${UBOOT_SRC}" ]] ||
 	{ echo "ERROR: vendor U-Boot source not found: ${UBOOT_SRC}" >&2; exit 1; }
 [[ -f "${UBOOT_SRC}/.config" ]] ||

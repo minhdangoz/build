@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Force 1080p display mode
+Comment=Selects 1920x1080 for GPU performance on TX68/KM7's Mali-G31
+Exec=/usr/local/bin/force-1080p.sh
+X-GNOME-Autostart-enabled=true
+NoDisplay=true

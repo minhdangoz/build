@@ -123,19 +123,29 @@ setenv tx68_bootscript_ver "17-perf-gov"
 # "Console: switching to colour frame buffer device 480x135" is 480x135
 # *characters* at the 8x16 boot font = 3840x2160 pixels.
 #
-# Historical note, kept because it was nearly a wrong fix: this line was first
-# added on the theory that 4K was why the screen stayed black. It was not --
-# the black screen was a bad HDMI cable, and 4K did come up once the cable was
-# replaced. The mode pin stays anyway, for the real reason: 4K is too slow to
-# use on this box, while 1080p60 with GPU acceleration is smooth.
+# This forced video= line previously read
+# "video=HDMI-A-1:1920x1080@60". Confirmed live (kernel log) that Linux's
+# video= cmdline parser synthesizes that as a CVT *reduced-blanking* timing
+# (138.5 MHz, 2080x1111 total) rather than the standard CEA-861 1080p60
+# timing (148.5 MHz, 2200x1125) monitors actually advertise in EDID -- our
+# panel rejected it outright ("User-defined mode not supported"), so
+# sun4i-drm could never complete a modeset at boot and the screen stayed
+# black until an unrelated HDMI replug forced the driver to fall back to a
+# mode the EDID did support. That is a real, reproducible bug in this line,
+# not a bad cable.
 #
-# This is a kernel cmdline knob, not a DT one -- changing it needs neither a
-# DTB nor a kernel rebuild, just a repack. Drop it to let the EDID decide, or
-# override per-boot from the U-Boot prompt with
+# 4K desktop compositing is still too slow for this box's Mali-G31, so 1080p
+# is still the right target for performance -- it's now enforced downstream
+# instead, via a GNOME session-start xrandr call that only ever selects a
+# mode already present in the connector's own EDID-derived mode list (see
+# packages/bsp/common/usr/local/bin/force-1080p.sh), so it can't hit this
+# unsupported-timing failure. Leave videoargs empty here and let the kernel
+# boot at native EDID resolution; override per-boot from the U-Boot prompt
+# with
 #   setenv extraargs "video=HDMI-A-1:2560x1440@60"
 # which wins because extraargs is appended after this and the parser in
 # drivers/video/cmdline.c keeps the last match for a connector.
-setenv videoargs "video=HDMI-A-1:1920x1080@60"
+setenv videoargs ""
 
 setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} ${videoargs} consoleblank=0 loglevel=${verbosity} ubootpart=${partuuid} tx68_bootscript_ver=${tx68_bootscript_ver} ${extraargs} ${extraboardargs}"
 if test "${docker_optimizations}" = "on"; then

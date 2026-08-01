@@ -1,0 +1,85 @@
+From 5c8a4ab4a57f3019477096834f455f4ba2ac7b62 Mon Sep 17 00:00:00 2001
+From: Jimmy <minhdangoz94@gmail.com>
+Date: Sun, 2 Aug 2026 20:25:00 +0700
+Subject: [PATCH] leds: fd650: align display semantics with TX68
+
+KM7 and TX68 use the same FD650 segment convention, but the Amlogic
+driver forces decimal-point bits on three digits and lacks the degree
+character used by the shared userspace temperature display.
+
+Only drive the separator requested by sec_flag, map '*' to the same
+top-half degree glyph used by TX68, and support a blank character.  Show
+0001 after a successful probe as the same early hardware-ready indication
+as TX68.  Since '*' is no longer blank, use spaces for the clear command.
+
+---
+ common_drivers/drivers/led/fd650.c | 22 +++++++++++-----------
+ 1 file changed, 11 insertions(+), 11 deletions(-)
+
+diff --git a/common_drivers/drivers/led/fd650.c b/common_drivers/drivers/led/fd650.c
+index b85df4e33..183b93dfc 100644
+--- a/common_drivers/drivers/led/fd650.c
++++ b/common_drivers/drivers/led/fd650.c
+@@ -51,7 +51,7 @@ struct fd650_bus {
+ 	bool use_bl30_ctrl;
+ };
+ 
+-#define LED_MAP_NUM 22
++#define LED_MAP_NUM 24
+ 
+ struct led_bitmap {
+ 	u8 character;
+@@ -65,6 +65,6 @@ const struct led_bitmap bcd_decode_tab[LED_MAP_NUM] = {
+ 	{'b', 0x7C}, {'B', 0x7C}, {'c', 0x58}, {'C', 0x39},
+ 	{'d', 0x5E}, {'D', 0x5E}, {'e', 0x79}, {'E', 0x79},
+-	{'f', 0x71}, {'F', 0x71}
++	{'f', 0x71}, {'F', 0x71}, {'*', 0x63}, {' ', 0x00}
+ };
+ 
+ u8 led_get_code(char ch)
+@@ -200,19 +201,16 @@ void led_show_650(struct fd650_bus *bus, char *str, unsigned char sec_flag, unsi
+ 	for (i = 0; i < length; i++)
+ 		data[i] = led_get_code(str[i]);
+ 
++	/* lock controlled extra dots in the vendor UI; shared userspace does not. */
++	(void)lock;
+ 	fd650_write(bus, fd650_brightness_cmd(bus->brightness));
+-	fd650_write(bus, FD650_DIG0 | (u8)data[0] | FD650_DOT);
++	fd650_write(bus, FD650_DIG0 | (u8)data[0]);
+ 	if (sec_flag)
+ 		fd650_write(bus, FD650_DIG1 | (u8)data[1] | FD650_DOT);
+ 	else
+ 		fd650_write(bus, FD650_DIG1 | (u8)data[1]);
+-
+-	if (lock)
+-		fd650_write(bus, FD650_DIG2 | (u8)data[2] | FD650_DOT);
+-	else
+-		fd650_write(bus, FD650_DIG2 | (u8)data[2]);
+-
+-	fd650_write(bus, FD650_DIG3 | (u8)data[3] | FD650_DOT);
++	fd650_write(bus, FD650_DIG2 | (u8)data[2]);
++	fd650_write(bus, FD650_DIG3 | (u8)data[3]);
+ }
+ 
+ static int fd650_sda_get(struct fd650_bus *bus)
+@@ -318,7 +318,7 @@ static ssize_t fd650_clear_store(struct device *dev,
+ 	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+ 	struct fd650_bus *bus = container_of(led_cdev,
+ 			struct fd650_bus, cdev);
+-	led_show_650(bus, "****", 0, 1);
++	led_show_650(bus, "    ", 0, 0);
+ 
+ 	return size;
+ }
+@@ -455,6 +455,9 @@ static int fd650_probe(struct platform_device *pdev)
+ 	fd650_device_create(&bus->cdev);
+ 	platform_set_drvdata(pdev, bus);
+ 
++	if (!bus->use_bl30_ctrl)
++		led_show_650(bus, "0001", 0, 0);
++
+ 	return 0;
+ 
+ error1:
+-- 
+2.34.1

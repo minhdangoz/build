@@ -25,6 +25,25 @@ The target stays on Khadas's `khadas-vims-5.15.y` vendor kernel. Moving KM7
 from Fenix into this repo removes the second build framework; it does not turn
 S905Y4 into a mainline-kernel board.
 
+## Versions and owned source snapshots
+
+KM7 is a `legacy` target using Linux **5.15.137** and U-Boot **2019.01**.
+Production builds use these immutable, user-owned snapshots:
+
+| Input | Repository | Pinned snapshot |
+|---|---|---|
+| Kernel | [`minhdangoz/khadas-linux`](https://github.com/minhdangoz/khadas-linux) | [`ebbf016784df`](https://github.com/minhdangoz/khadas-linux/commit/ebbf016784df1436c6bdf0118f816f69042dd675) |
+| Common drivers | [`minhdangoz/khadas-common-drivers`](https://github.com/minhdangoz/khadas-common-drivers) | [`fc43f888dfea`](https://github.com/minhdangoz/khadas-common-drivers/commit/fc43f888dfea51bcf5037623fd4b4683cd5fbf9a) |
+| U-Boot | [`minhdangoz/coreelec-u-boot`](https://github.com/minhdangoz/coreelec-u-boot) | [`3a50f0ae9834`](https://github.com/minhdangoz/coreelec-u-boot/commit/3a50f0ae983426a44940223423aa348deb909dc9) |
+
+The SSOT for the full hashes, original-upstream provenance and the S905Y4 FIP
+header checksum is
+[`config/boards/tx68-km7-source-lock.inc`](../config/boards/tx68-km7-source-lock.inc).
+To update later, first import a new revision into the owned repository, then
+change the lock, rebuild and hardware-test. Do not replace the old snapshot;
+keeping it makes rollback deterministic. See
+[`docs/SOURCE_OWNERSHIP.md`](../docs/SOURCE_OWNERSHIP.md).
+
 ## Build
 
 For the short, current build recipe and one-command wrapper, see

@@ -377,6 +377,80 @@ appends `${boot_user_args}` last, it overrides U-Boot's values. Use it to
 confirm the diagnosis; the U-Boot change above is the durable fix, and
 forcing a mode there caps a 4K TV at whatever mode you pick.
 
+## HDMI: EDID auto-negotiates 2160p60hz/420,10bit, GNOME falls back to a rejected mode, screen stays black forever
+
+This is a *different* failure from the `vout=none` one above: HPD is high,
+EDID reads cleanly, `2160p60hz` boots and shows the boot logo. The screen
+still goes black once the desktop session starts, and stays black through a
+reboot — it does not self-heal, and it is not a cable/EDID problem.
+
+### Symptom
+
+Live-verified on real hardware (2026-08-02):
+
+```text
+[hdmitx:] edid: blk0 raw data ... (parses fine)
+gnome-shell: Failed to use linear monitor configuration: No available CRTC for monitor 'unknown unknown' not found
+[drm:meson_hdmitx_encoder_atomic_check [aml_drm]] *ERROR* validate_mode fail for [1080p60hz-420,10bit]
+gnome-shell: Page flip failed: drmModeAtomicCommit: Invalid argument
+gnome-shell: Failed to post KMS update: drmModeAtomicCommit: Invalid argument
+```
+
+`cat /sys/class/display/mode` is stuck on `dummy_l` (the disabled/dummy
+connector) and every subsequent atomic commit repeats the same
+`validate_mode fail` / `flip_done timed out` pair — this does not clear on
+its own and survives a reboot, because U-Boot re-negotiates the same EDID
+"best" mode (`2160p60hz`, `420,10bit`) every time.
+
+### Root cause
+
+U-Boot's `select_best_resolution()` picks the highest-quality mode this
+particular monitor's EDID advertises: `2160p60hz` at `YCbCr420, 10bit`. The
+kernel inherits that as its *starting* HDMI TX color format
+(`hdmitx_common_init_bootup_format_para`) and, because U-Boot already drove
+the panel, the first modeset is skipped ("`alread display in uboot`") — so
+this combination is never run through `meson_hdmitx_encoder_atomic_check`
+at boot.
+
+Separately, GNOME/mutter fails to identify this monitor from its EDID
+(`'unknown unknown'`, no monitor-name descriptor block) and falls back to
+requesting `1080p60hz` for the desktop session instead of the sink's actual
+preferred/native mode. It does this while still carrying the
+`420,10bit` color format inherited from the U-Boot boot mode. The Amlogic
+5.15 `meson_hdmitx_encoder_atomic_check` rejects `1080p60hz` combined with
+`420,10bit` outright (chroma subsampling exists to fit 4K into HDMI's
+bandwidth budget; no sink asks for 4:2:0 at 1080p), and nothing in this
+driver resets the color format to something valid for the new resolution
+before retrying. Every later atomic commit — including the automatic
+retries in the kernel's own hotplug handling — repeats the same rejected
+combination, so the display never recovers.
+
+`GPU`/`VPU` config (`clk_level`, Panfrost, DVFS) was checked and ruled out:
+`clk_level = <7>` on `&vpu` matches the Android KM7 4 GB DTS byte-for-byte
+across every S4 board in the vendor tree (`grep clk_level` across
+`common/arch/arm64/boot/dts/amlogic/*.dts` in the Android source), so it is
+not a wrong value — the bug is the stale color-format carry-over across a
+resolution change, independent of VPU clock.
+
+### Fix
+
+`config/boards/km7.csc`'s `image_specific_armbian_env_ready__km7_kernel_args`
+appends `vout=1080p60hz,enable hdmitx=,444,8bit hdmimode=1080p60hz
+hdmichecksum=0x00000000` to `extraargs` in `armbianEnv.txt`. A later `vout=`
+/ `hdmitx=` token on the kernel cmdline wins over U-Boot's EDID-negotiated
+one (same mechanism as the `kvm-arm.mode=none` override already in that
+function), so the kernel now starts at `1080p60hz`/RGB 8bit instead of
+`2160p60hz`/YCbCr420 10bit. GNOME's fallback-to-1080p60hz path then matches
+the color format it inherits, `validate_mode` stops rejecting it, and the
+desktop renders. This caps the display at 1080p60hz even on a 4K-capable
+monitor — the underlying stale-color-format driver bug is not fixed, only
+avoided by keeping the color format consistent across the one resolution
+GNOME actually uses.
+
+To test on a running board without rebuilding, edit
+`/boot/armbianEnv.txt`'s `extraargs=` line directly and reboot — no image
+rebuild needed, and this is how the fix above was verified.
+
 ## Two pinmux conflicts that killed WiFi, Bluetooth and the front panel
 
 Both were KM7-only regressions, both live-verified, both fixed in km7.dts.

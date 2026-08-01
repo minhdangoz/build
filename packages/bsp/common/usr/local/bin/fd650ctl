@@ -135,12 +135,9 @@ cmd_temp() {
 	[[ -n "${zone}" ]] || zone="/sys/class/thermal/thermal_zone0"
 	raw="$(cat "${zone}/temp" 2>/dev/null)" || die "cannot read ${zone}/temp"
 	celsius=$(( raw / 1000 ))
-	# '*' renders as the degree symbol (top-left square, a+b+f+g). On TX68
-	# this is already in the char table (fd650.h CHAR_DEGREE). On KM7 it
-	# needs the matching kernel patch (see docs/FD650.md) -- until that
-	# lands, '*' just shows blank on KM7 (unmatched chars render as
-	# all-segments-off there, same fallback TX68 uses for genuinely blank
-	# positions), which is a harmless-looking gap, not wrong output.
+	# '*' renders as the degree symbol (top-half square, a+b+f+g) through
+	# the board's kernel backend. Both TX68 and KM7 map it to segment mask
+	# 0x63, so the shared temperature output is exactly e.g. "50*C".
 	printf -v text '%2d*C' "${celsius}"
 	raw_write "${text}" 0 "${brightness}"
 }

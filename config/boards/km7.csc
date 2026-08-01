@@ -18,6 +18,8 @@ BOOT_FDT_FILE="amlogic/km7.dtb"
 BOOT_LOGO="desktop"
 FORCE_BOOTSCRIPT_UPDATE="yes"
 
+source "${SRC}/config/boards/tx68-km7-source-lock.inc"
+
 OVERLAY_PREFIX="s4-s905y4"
 # This overlay replaces the vendor Midgard-compatible GPU binding with the
 # Bifrost binding that the in-tree Panfrost driver matches. Live KM7 hardware
@@ -46,6 +48,12 @@ enable_extension "km7-amlogic-burn"
 # because Armbian copies that Khadas tree into the Linux worktree before its
 # normal patch stage.
 function post_family_config__km7_patchsets_and_bootargs() {
+	declare -g KERNELSOURCE="${KM7_KERNEL_SOURCE}"
+	declare -g KERNELBRANCH="${KM7_KERNEL_REF}"
+	declare -g COMMON_DRIVERS_SOURCE="${KM7_COMMON_DRIVERS_SOURCE}"
+	declare -g COMMON_DRIVERS_BRANCH="${KM7_COMMON_DRIVERS_REF}"
+	declare -g BOOTSOURCE="${KM7_UBOOT_SOURCE}"
+	declare -g BOOTBRANCH="${KM7_UBOOT_REF}"
 	declare -g KERNELPATCHDIR="${KERNELPATCHDIR} archive/meson-s4t7-5.15-km7"
 	declare -g BOOTPATCHDIR="${BOOTPATCHDIR} u-boot-meson-s4t7-km7"
 }
@@ -109,7 +117,21 @@ function post_family_tweaks_bsp__km7_module_lists() {
 function image_specific_armbian_env_ready__km7_kernel_args() {
 	# The vendor kernel has kvm-arm.mode=protected built into CONFIG_CMDLINE,
 	# which is not usable with KM7's secure firmware. A later argument wins.
-	run_host_command_logged echo "extraargs=kvm-arm.mode=none" ">>" "${SDCARD}/boot/armbianEnv.txt"
+	#
+	# HDMI: also pin the boot display to 1080p60hz/RGB 8bit instead of letting
+	# U-Boot's EDID auto-negotiation hand the kernel 2160p60hz + YCbCr420
+	# 10bit. GNOME/mutter on this monitor fails to build a linear monitor
+	# config ("No available CRTC for monitor 'unknown unknown'") and falls
+	# back to requesting 1080p60hz, but it keeps the inherited 420,10bit
+	# color format. meson_hdmitx_encoder_atomic_check rejects that specific
+	# combo ("validate_mode fail for [1080p60hz-420,10bit]"), the atomic
+	# commit never completes, and every later modeset attempt fails the same
+	# way -- the display never recovers without a reboot. Live-verified on
+	# real hardware (2026-08-02): forcing vout/hdmitx/hdmimode/hdmichecksum
+	# here removes the EDID auto-negotiated 420,10bit start state and the
+	# validate_mode failures stop appearing. A later "vout=" and "hdmitx="
+	# token on the cmdline wins over U-Boot's own, same as kvm-arm.mode above.
+	run_host_command_logged echo "extraargs=kvm-arm.mode=none vout=1080p60hz,enable hdmitx=,444,8bit hdmimode=1080p60hz hdmichecksum=0x00000000" ">>" "${SDCARD}/boot/armbianEnv.txt"
 }
 
 function post_family_tweaks__km7_firstboot_identity() {
@@ -184,4 +206,27 @@ function post_family_tweaks__km7_remote_desktop() {
 	chroot_sdcard "x11vnc -storepasswd km7 /etc/x11vnc.pass"
 	run_host_command_logged install -m 644 "${SRC}/packages/bsp/common/lib/systemd/system/x11vnc.service" "${SDCARD}/lib/systemd/system/x11vnc.service"
 	chroot_sdcard systemctl --no-reload enable x11vnc.service ssh.service
+}
+
+# KM7's Mali-G31 is the same weak GPU as TX68's, and panels attached to this
+# box commonly report 4K as their native/preferred EDID mode, which is too
+# slow to compose smoothly here -- and confirmed live on TX68, letting Xorg's
+# own screen init pick a 4K initial mode can outright crash it
+# ("AddScreen/ScreenInit failed for driver 0"), crash-looping GDM forever.
+# Unlike TX68, nothing forces a mode at the U-Boot/kernel layer for KM7 (the
+# vendor U-Boot's outputmode=none fallback to 1080p60hz only fires when
+# EDID/HPD read fails entirely -- see
+# patch/u-boot/u-boot-meson-s4t7-km7/0002-km7-fall-back-to-1080p60hz...patch),
+# so this needs the same X11-layer fix TX68 uses: the shared xorg.conf.d
+# monitor override makes Xorg's own initial mode selection match against the
+# connector's real EDID-probed mode list (the working CEA timing) instead of
+# defaulting to native 4K. The xrandr autostart script stays too, as a
+# harmless no-op safety net for whatever this ends up matching to.
+function post_family_tweaks__km7_force_1080p() {
+	mkdir -p "${SDCARD}"/etc/X11/xorg.conf.d
+	run_host_command_logged install -m 644 "${SRC}/packages/bsp/common/etc/X11/xorg.conf.d/10-monitor.conf" "${SDCARD}/etc/X11/xorg.conf.d/10-monitor.conf"
+
+	run_host_command_logged install -m 755 "${SRC}/packages/bsp/common/usr/local/bin/force-1080p.sh" "${SDCARD}/usr/local/bin/force-1080p.sh"
+	mkdir -p "${SDCARD}"/etc/xdg/autostart
+	run_host_command_logged install -m 644 "${SRC}/packages/bsp/common/etc/xdg/autostart/force-1080p.desktop" "${SDCARD}/etc/xdg/autostart/force-1080p.desktop"
 }
