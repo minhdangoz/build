@@ -1,0 +1,58 @@
+From f614c0c2f60af5adc5aa2f58578cc43ad0dde016 Mon Sep 17 00:00:00 2001
+From: Jimmy <minhdangoz94@gmail.com>
+Date: Sat, 1 Aug 2026 15:41:03 +0700
+Subject: [PATCH 8/8] arm64: dts: amlogic: expose KM7 4GB memory layout
+
+The inspected KM7 has 4GB of physical DDR3. Match Amlogic's dedicated
+s4_s905y4_ap222_drm_4g.dts profile and expose 3.5GB below the S4 MMIO
+aperture instead of retaining the 2GB profile's limit.
+
+Do not expose a contiguous 4GB range: CBUS and other peripherals occupy
+the top of the 32-bit physical address space and must not become System
+RAM.
+
+Change-Id: Ib2fe013b0a0dfe535f0b0637aa65840485d436db
+---
+ arch/arm64/boot/dts/amlogic/km7.dts | 25 +++++++------------------
+ 1 file changed, 7 insertions(+), 18 deletions(-)
+
+diff --git a/common_drivers/arch/arm64/boot/dts/amlogic/km7.dts b/common_drivers/arch/arm64/boot/dts/amlogic/km7.dts
+index 9ec97c7bc..db6b90619 100644
+--- a/common_drivers/arch/arm64/boot/dts/amlogic/km7.dts
++++ b/common_drivers/arch/arm64/boot/dts/amlogic/km7.dts
+@@ -43,25 +43,14 @@
+ 
+ 	memory@00000000 {
+ 		device_type = "memory";
+-		/* Board physically has 4GB (confirmed via live `bdinfo`), but
+-		 * declaring the full 4GB here (0x1 0x0) makes the kernel treat
+-		 * the SoC's CBUS/peripheral MMIO aperture at the top of the
+-		 * 32-bit physical space (~0xfe000000-0xffffffff) as regular
+-		 * System RAM, since it now falls inside the declared usable
+-		 * range. That makes arm64's ioremap() refuse to map any
+-		 * register window up there (pfn_is_map_memory() check),
+-		 * live-verified via UART: codec_io_probe's first ioremap
+-		 * (cbus @ 0xfe002000) hit "WARNING ... __ioremap_caller" and
+-		 * failed with -ENOMEM, aml_media's probe chain then faulted
+-		 * and paniced with "synchronous external abort ... Fatal
+-		 * exception in interrupt", causing a boot loop.
+-		 * Every other S4/AP222 board file in this vendor tree
+-		 * (kvim1s.dts, s4_s905y4_ap222_linux.dts,
+-		 * s4_s905y4_ap222_drm.dts) caps this at 0x80000000 (2GB)
+-		 * for the same reason regardless of installed RAM size —
+-		 * match that known-good value here too.
++		/* The 4GB S4/AP222 vendor profile exposes 3.5GB below the SoC's
++		 * top-of-32-bit MMIO aperture. Do not use a contiguous 4GB range:
++		 * that covers CBUS at 0xfe000000 and makes ioremap() fail. The
++		 * vendor source-of-truth is s4_s905y4_ap222_drm_4g.dts, whose
++		 * only memory-layout difference from the 2GB profile is this
++		 * 0xe0000000 limit.
+ 		 */
+-		linux,usable-memory = <0x0 0x0 0x0 0x80000000>;
++		linux,usable-memory = <0x0 0x0 0x0 0xe0000000>;
+ 	};
+ 
+ 	reserved-memory {
+-- 
+2.34.1
+

@@ -111,6 +111,28 @@ function image_specific_armbian_env_ready__km7_kernel_args() {
 	run_host_command_logged echo "extraargs=kvm-arm.mode=none" ">>" "${SDCARD}/boot/armbianEnv.txt"
 }
 
+function post_family_tweaks__km7_firstboot_identity() {
+	# userpatches/firstboot.conf is global and can contain presets intended for
+	# another board. Account identity is a board invariant, so make the KM7
+	# values authoritative in the image while preserving locale/network knobs.
+	declare firstboot_file="${SDCARD}/root/.not_logged_in_yet"
+	touch "${firstboot_file}"
+	sed -i \
+		-e '/^PRESET_USER_NAME=/d' \
+		-e '/^PRESET_USER_PASSWORD=/d' \
+		-e '/^PRESET_DEFAULT_REALNAME=/d' \
+		-e '/^PRESET_ROOT_PASSWORD=/d' \
+		"${firstboot_file}"
+	cat <<- 'KM7_FIRSTBOOT_IDENTITY' >> "${firstboot_file}"
+
+		# KM7 board-owned first-login identity
+		PRESET_USER_NAME="km7"
+		PRESET_USER_PASSWORD="km7"
+		PRESET_DEFAULT_REALNAME="KM7"
+		PRESET_ROOT_PASSWORD="km7"
+	KM7_FIRSTBOOT_IDENTITY
+}
+
 function post_family_tweaks__km7_enable_front_panel() {
 	chroot_sdcard systemctl --no-reload enable km7-fd650-clock.service
 }

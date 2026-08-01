@@ -96,13 +96,15 @@ dmesg | grep -Ei 'panfrost|mali|gpu'
 ## RAM
 
 - **4 GB is physically fitted**, confirmed live via U-Boot `bdinfo`.
-- **Linux 5.15 currently exposes 2 GB** through
-  `linux,usable-memory = <0x0 0x0 0x0 0x80000000>`. Declaring the full 4 GB
-  makes the vendor kernel treat the S4 peripheral aperture near
-  `0xfe000000..0xffffffff` as System RAM; `ioremap()` then rejects device
-  registers and the media probe chain crashes. The 2 GB cap matches the other
-  S4/AP222 vendor DTS files and is intentional until the memory map is fixed
-  at the kernel level.
+- **Linux 5.15 receives 3.5 GB** through
+  `linux,usable-memory = <0x0 0x0 0x0 0xe0000000>`, matching Amlogic's
+  dedicated `s4_s905y4_ap222_drm_4g.dts` profile. The final 512 MB below
+  4 GB contains the S4 MMIO aperture, including CBUS at `0xfe000000`, and is
+  intentionally not exposed as System RAM.
+- Do not declare a contiguous 4 GB range (`0x1 0x0`): it overlaps MMIO,
+  causes device `ioremap()` failures and crashes the vendor media probe chain.
+  The previous 2 GB value was safe but incorrectly used the vendor 2 GB
+  profile's limit on this 4 GB unit.
 - Do not confuse the physical capacity, U-Boot's DRAM detection and Linux's
   current usable-memory window; they are three different observations.
 - DDR firmware type: `ddr3` (`CONFIG_DDRFW_TYPE="ddr3"` in km7_defconfig).
