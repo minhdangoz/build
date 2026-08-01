@@ -1,14 +1,20 @@
 [Unit]
-Description=TX68 FD650 front-panel clock
-After=systemd-udev-settle.service
-ConditionPathExists=/dev/fd650_dev
+Description=TX68 FD650 front-panel status (boot progress -> clock/temp)
+# Start the instant the device node exists -- not after the whole of
+# systemd-udev-settle, which waits for every udev event system-wide to
+# drain and can run well past when this one device is actually ready.
+After=dev-fd650_dev.device
+BindsTo=dev-fd650_dev.device
 
 [Service]
 Type=simple
-Environment=TX68_FD650_BRIGHTNESS=3
+Environment=TX68_FD650_BRIGHTNESS=1
 ExecStart=/usr/local/bin/tx68-fd650-clock
 Restart=on-failure
 RestartSec=2
 
 [Install]
-WantedBy=multi-user.target
+# WantedBy a .device unit (not multi-user.target) is what makes this
+# device-triggered: systemd starts it the moment /dev/fd650_dev appears,
+# instead of waiting for multi-user.target (i.e. most of the rest of boot).
+WantedBy=dev-fd650_dev.device

@@ -1,3 +1,8 @@
 # FD650 front-panel display: let the local desktop user (in the "video"
 # group, same as DRM/framebuffer devices) control it without sudo.
-KERNEL=="fd650_dev", SUBSYSTEM=="misc", MODE="0660", GROUP="video"
+#
+# TAG+="systemd" makes systemd generate a dev-fd650_dev.device unit for
+# this node -- misc chardevs don't get this automatically the way block/net/
+# tty devices do. tx68-fd650-clock.service's WantedBy=dev-fd650_dev.device
+# depends on that unit existing to trigger device-activated startup.
+KERNEL=="fd650_dev", SUBSYSTEM=="misc", MODE="0660", GROUP="video", TAG+="systemd"

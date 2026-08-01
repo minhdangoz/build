@@ -1,8 +1,22 @@
 #!/bin/bash
-# tx68-fd650-clock — default FD650 front-panel behavior: rotate between the
-# current time and CPU temperature. Uses fd650ctl for all writes (single
-# place that knows the /dev/fd650_dev byte protocol -- see fd650ctl's
-# raw_write comment for why this can't be reimplemented with a naive printf).
+# tx68-fd650-clock — FD650 front-panel: boot progress until NTP sync, then
+# rotate between clock and CPU temperature.
+#
+# Boot sequence on this board (see docs/TX68_HARDWARE.md 11.2):
+#   1. U-Boot's own vendor driver flashes "8888" (not ours, can't change --
+#      board is secure-boot signed by a key we don't have).
+#   2. fd650.ko's probe() shows "0001" the moment the kernel driver binds.
+#   3. This service starts as soon as /dev/fd650_dev exists (see the unit's
+#      dev-fd650_dev.device ordering -- earlier than waiting for the whole
+#      of systemd-udev-settle) and takes over from there.
+#   4. Until the system clock is NTP-synced, show minutes:seconds since
+#      boot as a live, moving "still alive" counter -- more informative
+#      than a fixed code, and it needs no separate milestones to invent
+#      meaning for.
+#   5. The instant NTP syncs (== the box actually has working internet),
+#      switch to rotating real time and CPU temperature. If NTP sync is
+#      ever lost again, fall back to the boot-progress counter
+#      automatically.
 set -euo pipefail
 
 readonly FD650CTL="/usr/local/bin/fd650ctl"
@@ -11,14 +25,37 @@ export FD650_BRIGHTNESS="${TX68_FD650_BRIGHTNESS:-1}"
 readonly TIME_SECONDS="${TX68_FD650_TIME_SECONDS:-3}"
 readonly TEMP_SECONDS="${TX68_FD650_TEMP_SECONDS:-2}"
 
+ntp_synced() {
+	local state
+	state="$(timedatectl show -p NTPSynchronized --value 2>/dev/null || true)"
+	[[ "${state}" == "yes" ]]
+}
+
+show_boot_progress() {
+	local uptime_s mm ss text
+	uptime_s="$(cut -d. -f1 /proc/uptime)"
+	mm=$(( (uptime_s / 60) % 100 )) # clamp to 2 digits, wraps after 99:59
+	ss=$(( uptime_s % 60 ))
+	printf -v text '%02d%02d' "${mm}" "${ss}"
+	"${FD650CTL}" show "${text}" --dot
+}
+
 while true; do
+	if ! ntp_synced; then
+		show_boot_progress
+		sleep 1
+		continue
+	fi
+
 	end=$(( $(date +%s) + TIME_SECONDS ))
-	while [[ $(date +%s) -lt ${end} ]]; do
+	while ntp_synced && [[ $(date +%s) -lt ${end} ]]; do
 		"${FD650CTL}" time
 		sleep 1
 	done
+	ntp_synced || continue
+
 	end=$(( $(date +%s) + TEMP_SECONDS ))
-	while [[ $(date +%s) -lt ${end} ]]; do
+	while ntp_synced && [[ $(date +%s) -lt ${end} ]]; do
 		"${FD650CTL}" temp
 		sleep 1
 	done

@@ -19,8 +19,8 @@ diff -ruN a/drivers/Makefile b/drivers/Makefile
 +obj-$(CONFIG_VFD)		+= vfd/
 diff -ruN a/drivers/vfd/fd650.c b/drivers/vfd/fd650.c
 --- a/drivers/vfd/fd650.c	1970-01-01 08:00:00.000000000 +0800
-+++ b/drivers/vfd/fd650.c	2026-08-01 19:54:43.664905260 +0700
-@@ -0,0 +1,1045 @@
++++ b/drivers/vfd/fd650.c	2026-08-01 20:44:46.441887388 +0700
+@@ -0,0 +1,1050 @@
 +/*
 + * drivers/vfd/fd650.c
 + *
@@ -864,9 +864,14 @@ diff -ruN a/drivers/vfd/fd650.c b/drivers/vfd/fd650.c
 +	pdata->dev->error_time = 0;
 +	pdata->dev->auto_clear_timeout = 0;
 +
-+	pdata->dev->dot_fg = 0x00;  	// dot 中间冒号
-+	pdata->dev->brightness = 3;  	// 数码管亮度
-+	Led_Show_650("8888", pdata->dev);
++	// "0001": the earliest boot-progress checkpoint we control (U-Boot's
++	// own vendor driver already flashed "8888" before Linux even started
++	// -- see docs/TX68_HARDWARE.md section 11.2 -- this marks "kernel driver is
++	// alive" and persists on screen even if userspace is slow to start
++	// tx68-fd650-clock.service next).
++	pdata->dev->dot_fg = 0x00;
++	pdata->dev->brightness = 1;
++	Led_Show_650("0001", pdata->dev);
 +
 +#ifdef CONFIG_HAS_EARLYSUSPEND
 +	//fd650_early_suspend.level = EARLY_SUSPEND_LEVEL_BLANK_SCREEN;
