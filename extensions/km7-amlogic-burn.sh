@@ -20,11 +20,11 @@ function km7_burn_fetch_tools() {
 	local -r utils_ref="commit:0b209089f98929267fce98dcd7d34672cb5b98fc"
 
 	fetch_from_repo \
-		"https://github.com/numbqq/images_upgrade.git" \
+		"https://github.com/minhdangoz/images_upgrade.git" \
 		"km7-images-upgrade" \
 		"${images_upgrade_ref}"
 	fetch_from_repo \
-		"https://github.com/numbqq/utils.git" \
+		"https://github.com/minhdangoz/utils.git" \
 		"km7-fenix-utils" \
 		"${utils_ref}"
 }
