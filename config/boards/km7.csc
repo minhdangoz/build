@@ -167,3 +167,21 @@ function post_family_tweaks__km7_enable_front_panel() {
 	run_host_command_logged install -m 644 "${SRC}/packages/bsp/meson-s4t7/km7/etc/systemd/system/km7-fd650-clock.service" "${SDCARD}/lib/systemd/system/km7-fd650-clock.service"
 	chroot_sdcard systemctl --no-reload enable km7-fd650-clock.service
 }
+
+# Remote desktop: TV-box use case has no keyboard/mouse attached (see
+# DESKTOP_AUTOLOGIN above), so GUI access has to come over the network.
+# x11vnc mirrors the real X11 session (wayland-sessions-mask above already
+# forces GDM onto Xorg) rather than starting a second display. Shared with
+# TX68 -- same unit file, same port 5900, same storepasswd mechanism (see
+# config/boards/tx68.conf's matching block).
+function post_family_tweaks__km7_remote_desktop() {
+	chroot_sdcard_apt_get_install openssh-server x11vnc
+
+	# Password lives in /etc/x11vnc.pass, matching the km7/km7 console
+	# account's own security posture (LAN-only box, see
+	# post_family_tweaks__km7_firstboot_identity above) -- change both after
+	# first boot if this device is ever exposed beyond a trusted LAN.
+	chroot_sdcard "x11vnc -storepasswd km7 /etc/x11vnc.pass"
+	run_host_command_logged install -m 644 "${SRC}/packages/bsp/common/lib/systemd/system/x11vnc.service" "${SDCARD}/lib/systemd/system/x11vnc.service"
+	chroot_sdcard systemctl --no-reload enable x11vnc.service ssh.service
+}

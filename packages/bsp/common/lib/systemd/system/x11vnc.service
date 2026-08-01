@@ -1,5 +1,5 @@
 [Unit]
-Description=x11vnc remote desktop server for TX68 GNOME/X11 session
+Description=x11vnc remote desktop server (mirrors the local X11/GNOME session)
 After=gdm.service
 Wants=gdm.service
 
