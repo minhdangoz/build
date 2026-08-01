@@ -126,3 +126,42 @@ prioritize the H618 side first:
    the mainline GPU story is real, since that is the one concrete advantage
    over the existing, already-largely-working `orangepi-build` and `fenix`
    trees.
+
+## Status: both boards boot (2026-08-01)
+
+TX68 (H618) and KM7 (S905Y4) both build and boot successfully from this one
+repo now. From here on, **every change must be safe for both boards being
+built from the same tree** — this is a single shared checkout, not two
+separate per-board forks. A change scoped to `config/boards/tx68.conf` or
+`packages/bsp/sunxi/` is inherently safe (only pulled in when `BOARD=tx68`).
+The risk is in files that are *shared across every board build regardless of
+which one is selected* — those must never assume a single board.
+
+**Concrete incident, not hypothetical:** `userpatches/firstboot.conf` is one
+such shared file — it is copied into every image's rootfs regardless of
+`BOARD`. An earlier version hard-coded `PRESET_USER_NAME="tx68"` /
+`PRESET_ROOT_PASSWORD="tx68"` directly in it. That meant **building a KM7
+image would have baked in the TX68 account identity** — wrong username,
+wrong password, on hardware that isn't TX68. Fixed by making the file
+resolve `${BOARD}` at runtime (`source /etc/armbian-release`, which the
+board-specific BSP package generates inside the image) and branching per
+board in a `case` statement — see the file itself for the current pattern.
+
+**The rule going forward:** before hard-coding any board-specific value
+(username, password, GPIO pin, path, hostname, anything), check whether the
+file being edited is shared across all board builds or scoped to one board:
+
+- Scoped and safe by construction: `config/boards/<board>.conf` (and its
+  `post_family_config__<board>_*` / `post_family_tweaks__<board>_*` hook
+  functions), `packages/bsp/<family>/<board>/`, board-specific patch
+  directories under `patch/kernel/archive/`.
+- Shared — audit before touching: `userpatches/*.conf`,
+  `packages/bsp/common/`, anything under `lib/functions/`, any file
+  installed by a *family*-level hook (`post_family_tweaks__<family>`,
+  which runs for every board in that family, not just one) rather than a
+  board-level one.
+
+If a shared file genuinely needs per-board behavior, resolve `${BOARD}` (or
+`${BOARDFAMILY}`) at runtime inside it, the way `userpatches/firstboot.conf`
+does now — don't hard-code one board's values into a file every board's
+build touches.
