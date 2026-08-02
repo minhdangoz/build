@@ -167,9 +167,65 @@ thật trước khi sửa.
 
 ### Bước 4 — Nạp
 
-Dùng PhoenixSuit / PhoenixCard. Bảng "Partitions to Flash" chỉ hiện `rootfs` là
-**đúng** — Boot0/TOC1/U-Boot không phải "partition", chúng được ghi thẳng vào
-offset cố định và luôn đi kèm.
+Dùng **OpenixCLI** ở cây tool local sau; không cần PhoenixSuit/LiveSuit GUI:
+
+```bash
+OPENIXCLI=/media/jimmy/WORK/AOSP/TOOLS/OpenixCLI/target/release/openixcli
+IMAGE=/media/jimmy/WORK/AOSP/build/output/phoenix/Armbian-unofficial_26.08.0-trunk_Tx68_noble_current_6.18.41_gnome_desktop_<timestamp>_phoenixsuite.img
+```
+
+Binary đã được kiểm tra trên build host ngày 2026-08-02:
+
+```text
+SHA256  89a8963e9f9827323eb14ff60a8f59556aa7e4707da6b5e5a812e2fb694124cd
+source  /media/jimmy/WORK/AOSP/TOOLS/OpenixCLI
+commit  668d7b1 (OpenixCLI 0.1.9)
+origin  https://github.com/YuzukiTsuru/OpenixCLI
+```
+
+`origin` ở trên **không thuộc `minhdangoz`**. Build hiện dùng binary/source local
+đã có sẵn, không tải tool trong lúc flash. Nếu cần bảo đảm có thể tái tạo tool
+khi upstream biến mất, phải mirror commit này sang repo do `minhdangoz` sở hữu
+và cập nhật bảng trên; chỉ ghi SHA256 không thay thế được backup source.
+
+Trước mỗi lần flash, kiểm tra checksum image và xác nhận chỉ có đúng TX68 H616:
+
+```bash
+sha256sum -c "${IMAGE}.sha256"
+"${OPENIXCLI}" scan
+sunxi-fel -l
+sunxi-fel version
+```
+
+Kết quả đúng phải có một thiết bị Allwinner; `sunxi-fel` phải báo
+`Allwinner H616` / `soc=00001823(H616)`. Không flash nếu có nhiều thiết bị hoặc
+identity khác. Sau đó kiểm tra parser đọc được toàn bộ IMAGEWTY, kể cả
+`rootfs.fex` lớn hơn 4 GiB:
+
+```bash
+"${OPENIXCLI}" inspect "${IMAGE}"
+```
+
+Ghi toàn bộ eMMC, bật verify và reboot sau khi hoàn tất (thay bus/port bằng kết
+quả của `openixcli scan`; lần kiểm tra 2026-08-02 là bus 1, port 2):
+
+```bash
+"${OPENIXCLI}" flash "${IMAGE}" \
+  --bus 1 \
+  --port 2 \
+  --verify true \
+  --mode full_erase \
+  --post-action reboot \
+  --verbose
+```
+
+`sunxi-fel write` không thay thế lệnh này: nó chỉ ghi vào RAM. OpenixCLI thực
+hiện đầy đủ FEL -> FES, khởi tạo DRAM/eMMC, ghi và verify Boot0, TOC1/U-Boot,
+MBR cùng `rootfs.fex`. Trong danh sách partition, chỉ thấy `rootfs` là **đúng**:
+Boot0/TOC1/U-Boot không phải partition và được ghi vào offset cố định.
+
+PhoenixSuit/LiveSuit GUI chỉ là đường cứu hộ nếu OpenixCLI không hoạt động; không
+dùng làm quy trình mặc định nữa.
 
 ---
 
