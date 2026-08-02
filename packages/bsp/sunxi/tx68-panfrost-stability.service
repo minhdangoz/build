@@ -1,0 +1,14 @@
+[Unit]
+Description=TX68 Panfrost stability workaround (disable GPU runtime suspend)
+After=systemd-modules-load.service
+Before=display-manager.service
+ConditionPathExists=/sys/bus/platform/devices/1800000.gpu
+
+[Service]
+Type=oneshot
+ExecStartPre=/sbin/modprobe panfrost
+ExecStart=/bin/sh -ec 'echo on > /sys/bus/platform/devices/1800000.gpu/power/control; test "$(cat /sys/bus/platform/devices/1800000.gpu/power/control)" = on'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=graphical.target

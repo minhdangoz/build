@@ -112,7 +112,15 @@ sánh sau khi lên 1512 MHz.
 | GPU | Mali-G31 MP2 | H618 |
 | OPP vendor | 306–**600** MHz, toàn dải ở 950 mV | 📄 `board.dts &gpu` |
 | Nguồn | `dcdc1` (`vdd-gpu-sys`) | 📄 + ✅ 960 mV lúc chạy |
-| Tăng tốc phần cứng | Hoạt động (Panfrost) | ✅ GNOME mượt ở 1080p |
+| Tăng tốc phần cứng | Panfrost hoạt động, độ ổn định H618 đang kiểm tra | ✅ renderer phần cứng; đã gặp `gpu sched timeout` làm UI render thiếu |
+
+### 3.1 Canary ổn định Panfrost
+
+TX68 đã gặp GPU treo thật (`status=0x8`) và UI render thiếu sau dòng
+`gpu sched timeout`. Image cài `tx68-panfrost-stability.service` để nạp Panfrost
+sớm và đặt `1800000.gpu/power/control=on` trước display manager. Đây là phép thử
+A/B có chủ đích: nếu timeout biến mất thì owner path là runtime suspend/resume;
+nếu vẫn còn thì bước tiếp theo là cố định xung/điện áp theo bảng vendor.
 
 ---
 
