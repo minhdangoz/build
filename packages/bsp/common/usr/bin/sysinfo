@@ -1,0 +1,21 @@
+#!/bin/bash
+#
+# Show the Armbian login banner (device, IPs, health) on demand by
+# replaying /etc/update-motd.d/ without clearing the terminal.
+
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Reset the one-time spacer stamps so output is spaced like a fresh login.
+# /run/armbian-motd is root-owned; the per-user fallback lives in XDG_RUNTIME_DIR.
+for dir in /run/armbian-motd "${XDG_RUNTIME_DIR:-/tmp}/armbian-motd"; do
+	rm -f "${dir}"/.*.printed 2> /dev/null
+done
+
+for part in /etc/update-motd.d/[0-9]*; do
+	[[ -x "${part}" ]] || continue
+	# 00-clear wipes the terminal; skip it for on-demand use
+	[[ "${part##*/}" == "00-clear" ]] && continue
+	"${part}"
+done
+
+exit 0

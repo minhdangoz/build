@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Armbian device info indicator
+Comment=Enable the hostname/IP top bar indicator on first login
+Exec=sh -c 'f="$HOME/.config/armbian-device-info.enabled"; [ -e "$f" ] || { mkdir -p "$HOME/.config"; gnome-extensions enable device-info@armbian.local && touch "$f"; }'
+OnlyShowIn=GNOME;
+NoDisplay=true
+X-GNOME-Autostart-Phase=Application

@@ -34,6 +34,7 @@ _motd_spacer() {
 # condition can be fairly complex
 list=(
     "Configuration","","armbian-config","true"
+    "Device info","","sysinfo","true"
     "Upgrade","","armbian-upgrade","[[ \"${NUM_UPDATES}\" -gt 0 ]]"
     "Monitoring","","htop","true"
 )

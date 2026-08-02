@@ -1,0 +1,8 @@
+{
+  "uuid": "device-info@armbian.local",
+  "name": "Device Info",
+  "description": "Shows the device hostname and primary IP address in the top bar.",
+  "shell-version": ["45", "46", "47", "48"],
+  "url": "https://www.armbian.com",
+  "version": 1
+}
