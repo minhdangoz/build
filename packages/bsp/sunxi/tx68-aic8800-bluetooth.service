@@ -1,0 +1,17 @@
+[Unit]
+Description=TX68 AIC8801 Bluetooth (UART HCI on ttyS1)
+After=bluetooth.service
+Wants=bluetooth.service
+
+[Service]
+Type=simple
+ExecStartPre=/usr/sbin/rfkill unblock all
+# Older AIC btlpm modules expose btwrite.  The current Radxa DKMS module does
+# not bind the TX68 bt-lpm DT node, so assert PG17 (global GPIO 209) directly.
+ExecStartPre=/bin/sh -ec 'if [ -e /proc/bluetooth/sleep/btwrite ]; then echo 1 > /proc/bluetooth/sleep/btwrite; else [ -d /sys/class/gpio/gpio209 ] || echo 209 > /sys/class/gpio/export; echo out > /sys/class/gpio/gpio209/direction; echo 1 > /sys/class/gpio/gpio209/value; fi'
+ExecStart=/usr/bin/hciattach -n -s 1500000 /dev/ttyS1 any 1500000 flow nosleep
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

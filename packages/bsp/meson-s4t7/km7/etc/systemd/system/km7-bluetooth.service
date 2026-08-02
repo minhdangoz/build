@@ -1,0 +1,17 @@
+[Unit]
+Description=KM7 Amlogic W1 Bluetooth firmware loader and UART HCI
+After=systemd-modules-load.service bluetooth.service
+Wants=bluetooth.service
+
+[Service]
+Type=simple
+Environment=LD_LIBRARY_PATH=/usr/lib/aml-bt/lib
+# The uploader is not restart-safe against firmware left running by an older
+# attachment. Reset only the Bluetooth rfkill endpoint before every upload.
+ExecStartPre=/bin/sh -ec '/usr/sbin/rfkill block bluetooth; sleep 1; /usr/sbin/rfkill unblock bluetooth; sleep 1'
+ExecStart=/usr/lib/aml-bt/linker /usr/lib/aml-bt/aml_bt_hciattach --enable_hci --chip_type W1 --patchram /usr/lib/aml-bt/fw_out.bin /dev/ttyS1
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

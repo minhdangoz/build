@@ -114,6 +114,18 @@ function post_family_tweaks_bsp__km7_module_lists() {
 	KM7_W1_MODULES
 }
 
+# W1 Bluetooth requires Amlogic's vendor firmware transaction before it will
+# answer normal HCI commands. The generic Ubuntu hciattach creates hci0 but
+# receives no bytes. Keep the Android/Bionic dependencies private under
+# /usr/lib/aml-bt; they were live-verified on this exact KM7 hardware.
+function post_family_tweaks__km7_bluetooth() {
+	chroot_sdcard_apt_get_install bluez rfkill
+	run_host_command_logged install -d "${SDCARD}/usr/lib/aml-bt"
+	run_host_command_logged cp -a "${SRC}/packages/bsp/meson-s4t7/km7/usr/lib/aml-bt/." "${SDCARD}/usr/lib/aml-bt/"
+	run_host_command_logged install -m 644 "${SRC}/packages/bsp/meson-s4t7/km7/etc/systemd/system/km7-bluetooth.service" "${SDCARD}/lib/systemd/system/km7-bluetooth.service"
+	chroot_sdcard systemctl --no-reload enable km7-bluetooth.service
+}
+
 function image_specific_armbian_env_ready__km7_kernel_args() {
 	# The vendor kernel has kvm-arm.mode=protected built into CONFIG_CMDLINE,
 	# which is not usable with KM7's secure firmware. A later argument wins.
