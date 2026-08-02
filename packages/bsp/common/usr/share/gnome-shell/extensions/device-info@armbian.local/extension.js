@@ -37,29 +37,19 @@ export default class DeviceInfoExtension extends Extension {
     }
 
     _refresh() {
-        let proc;
+        let host = GLib.get_host_name();
+        let ip = '';
         try {
-            // The interface holding the default route is the one SSH reaches
-            proc = Gio.Subprocess.new(
-                ['ip', '-4', 'route', 'get', '1.0.0.1'],
-                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE);
-        } catch {
-            return;
-        }
-        proc.communicate_utf8_async(null, null, (p, res) => {
-            let ip = '';
-            try {
-                const [, stdout] = p.communicate_utf8_finish(res);
-                const match = stdout?.match(/src (\S+)/);
+            let [ok, out] = GLib.spawn_command_line_sync('ip -4 route get 1.0.0.1');
+            if (ok) {
+                const match = out.toString().match(/src (\S+)/);
                 if (match)
                     ip = match[1];
-            } catch {
-                // offline or no default route: show hostname only
             }
-            if (this._label) {
-                const host = GLib.get_host_name();
-                this._label.text = ip ? `${host} · ${ip}` : host;
-            }
-        });
+        } catch {
+            // offline or no default route: show hostname only
+        }
+        if (this._label)
+            this._label.text = ip ? `${host} · ${ip}` : host;
     }
 }

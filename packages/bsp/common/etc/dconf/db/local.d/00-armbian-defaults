@@ -1,0 +1,5 @@
+[org/gnome/desktop/session]
+session-name='gnome-xorg'
+
+[org/gnome/shell]
+enabled-extensions=['device-info@armbian.local']
