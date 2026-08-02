@@ -219,6 +219,12 @@ quả của `openixcli scan`; lần kiểm tra 2026-08-02 là bus 1, port 2):
   --verbose
 ```
 
+Lệnh trên đã được chạy thành công trên TX68 thật ngày 2026-08-02 với image
+`..._20260802_03-33-41_phoenixsuite.img`: OpenixCLI ghi và verify sparse rootfs
+6,476,005,376 byte, verify Boot1/TOC1 và Boot0, trả exit code 0 rồi reboot thiết
+bị. Đây là bằng chứng cho đường flash/storage; vẫn phải kiểm tra kernel, service
+và phần cứng sau khi OS boot trước khi kết luận toàn bộ image hoạt động.
+
 `sunxi-fel write` không thay thế lệnh này: nó chỉ ghi vào RAM. OpenixCLI thực
 hiện đầy đủ FEL -> FES, khởi tạo DRAM/eMMC, ghi và verify Boot0, TOC1/U-Boot,
 MBR cùng `rootfs.fex`. Trong danh sách partition, chỉ thấy `rootfs` là **đúng**:
