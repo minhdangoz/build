@@ -25,6 +25,7 @@ Quy trình dựng ảnh nằm ở [`tx68/README.md`](../tx68/README.md); chuỗi
 | Bí danh dùng bên dưới | Đường dẫn |
 |---|---|
 | `board.dts` | `/home/jimmy/AOSP/pp618/longan/device/config/chips/h618/configs/m1k_go/linux-5.4/board.dts` |
+| `apollo_p1 5.15` | `/media/jimmy/WORK/SDK/tx68-android14/longan/device/config/chips/h618/configs/p1/linux-5.15/board.dts` |
 | `sys_config.fex` | cùng thư mục trên |
 | `pack fex` | `tx68/pack-uboot/bin/sys_config/sys_config_tx68.fex` (bản dùng khi đóng gói) |
 | BSP wireless | `/home/jimmy/AOSP/pp618/hardware/aic/`, `.../longan/kernel/linux-5.4/drivers/net/wireless/aic8800/` |
@@ -110,17 +111,48 @@ sánh sau khi lên 1512 MHz.
 | Hạng mục | Giá trị | Nguồn |
 |---|---|---|
 | GPU | Mali-G31 MP2 | H618 |
-| OPP vendor | 306–**600** MHz, toàn dải ở 950 mV | 📄 `board.dts &gpu` |
+| OPP Android 12 / Linux 5.4 | 306–**600** MHz, toàn dải ở 950 mV | 📄 `m1k_go/linux-5.4/board.dts &gpu` |
+| OPP Android 14 / Linux 5.15 | 420 · 456 · 504 · 552 · 600 · **648** MHz; 900 mV, riêng 648 MHz ở 960 mV | 📄 `apollo_p1/linux-5.15/board.dts &gpu` |
+| OPP Panfrost TX68 (removed) | ~~Cùng 6 mức xung Android 14; cố định rail dùng chung ở 960 mV tại mọi OPP~~ — gỡ bỏ, xem bên dưới | 📄 `sun50i-h616-tx68.dts` |
 | Nguồn | `dcdc1` (`vdd-gpu-sys`) | 📄 + ✅ 960 mV lúc chạy |
 | Tăng tốc phần cứng | Panfrost hoạt động, độ ổn định H618 đang kiểm tra | ✅ renderer phần cứng; đã gặp `gpu sched timeout` làm UI render thiếu |
+
+Android 14 không dùng Panfrost mà dùng `mali_kbase`. Bảng xung của nó từng được
+mang sang làm `operating-points-v2` cho Panfrost trên TX68 (6 mức, cố định
+960 mV để devfreq chỉ đổi clock chứ không hạ rail `vdd-gpu-sys` dùng chung).
+
+**Đã gỡ bảng OPP này (2026-08-02).** Rà soát toàn bộ board H616/H618 trong cây
+mainline 6.18 (`orangepi-zero2`, `orangepi-zero2w`, `orangepi-zero3`,
+`bananapi-m4-berry`, `x96-mate`, `kickpi-k2b`, `mellow-fly-c5`,
+`transpeed-8k618-t`) cho thấy **không board nào khác gắn `operating-points-v2`
+vào `&gpu`** — tất cả chỉ có `mali-supply` + `status = "okay"`, chạy ở xung mặc
+định cố định của `gpu0`, không bao giờ để Panfrost devfreq gọi
+`dev_pm_opp_set_rate()`. TX68 là board H616/H618 duy nhất từng bật đường
+devfreq đó, và đúng là board duy nhất gặp `gpu sched timeout`. `gpu0`
+(`drivers/clk/sunxi-ng/ccu-sun50i-h616.c`) là clock mux+chia có 2 nguồn
+(`pll-gpu`, `gpu1`), nên `clk_set_rate()` do devfreq gọi giữa các mức OPP có
+thể đổi nguồn mux ngay khi GPU đang chạy — việc không board nào khác trong cây
+từng thử dưới tải thật. Bỏ bảng OPP đưa TX68 về đúng cấu hình GPU mà mọi board
+H616/H618 khác trong mainline đang chạy ổn định, để loại biến số này trước khi
+nghi ngờ chỗ khác.
+
+Sau thay đổi này, `1800000.gpu` không còn `operating-points-v2`; devfreq không
+còn liệt kê nhiều mức xung nữa (không còn cần kiểm tra
+`/sys/class/devfreq/1800000.gpu/available_frequencies`).
 
 ### 3.1 Canary ổn định Panfrost
 
 TX68 đã gặp GPU treo thật (`status=0x8`) và UI render thiếu sau dòng
-`gpu sched timeout`. Image cài `tx68-panfrost-stability.service` để nạp Panfrost
-sớm và đặt `1800000.gpu/power/control=on` trước display manager. Đây là phép thử
-A/B có chủ đích: nếu timeout biến mất thì owner path là runtime suspend/resume;
-nếu vẫn còn thì bước tiếp theo là cố định xung/điện áp theo bảng vendor.
+`gpu sched timeout`, trong lúc bảng OPP ở trên còn tồn tại. Image cài
+`tx68-panfrost-stability.service` để nạp Panfrost sớm và đặt
+`1800000.gpu/power/control=on` trước display manager — đây là phép thử A/B
+độc lập với thay đổi OPP: nếu timeout biến mất thì owner path là runtime
+suspend/resume (PRCM `prcm_ppu` power-gate, xem `sun50i-h6-prcm-ppu.c`, không
+có polling chờ rail ổn định sau khi bật); nếu vẫn còn thì bước tiếp theo là cố
+định xung/điện áp theo bảng vendor. Giữ nguyên service này sau khi gỡ OPP —
+đây là hai giả thuyết độc lập, cần test riêng để biết cái nào (nếu có) là
+nguyên nhân thật. Kiểm tra lại trên máy thật sau khi build với thay đổi OPP ở
+trên trước khi kết luận cần giữ/gỡ canary.
 
 ---
 

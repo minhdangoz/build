@@ -128,6 +128,7 @@
 		fd650_gpio_dat = <&pio 8 12 GPIO_ACTIVE_HIGH>; /* PI12 */
 		status = "okay";
 	};
+
 };
 
 /*
@@ -258,6 +259,24 @@
 	};
 };
 
+/*
+ * No operating-points-v2 here, deliberately -- this board previously carried
+ * a 6-step OPP table (420-648 MHz @ 960 mV) ported from the Android 14
+ * apollo_p1 board.dts. It turned out to be unique in the entire mainline
+ * tree: every other H616/H618 board (orangepi-zero2/zero2w/zero3,
+ * bananapi-m4-berry, x96-mate, kickpi-k2b, mellow-fly-c5, transpeed-8k618-t)
+ * enables &gpu with only mali-supply + status, no OPP table at all, so
+ * Panfrost's devfreq core never calls dev_pm_opp_set_rate() on any of them --
+ * the GPU runs at gpu0's single default clock for the whole session.
+ *
+ * TX68 was the only board exercising that devfreq path, and it was hitting
+ * live "gpu sched timeout" hangs. gpu0 (drivers/clk/sunxi-ng/ccu-sun50i-h616.c)
+ * is a mux+divider clock with two parents (pll-gpu, gpu1), so a devfreq-driven
+ * clk_set_rate() between the OPP steps can re-parent the GPU clock live under
+ * load -- something no other shipping H616/H618 board's kernel ever does.
+ * Matching the rest of the tree (fixed clock, no DVFS) rules that out as a
+ * variable. See docs/TX68_HARDWARE.md §3 before reintroducing an OPP table.
+ */
 &gpu {
 	mali-supply = <&reg_dcdc1>;
 	status = "okay";

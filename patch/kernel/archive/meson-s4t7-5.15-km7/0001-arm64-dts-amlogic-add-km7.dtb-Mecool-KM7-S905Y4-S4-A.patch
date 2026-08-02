@@ -40,7 +40,7 @@ new file mode 100644
 index 000000000..1e1ac770b
 --- /dev/null
 +++ b/common_drivers/arch/arm64/boot/dts/amlogic/km7.dts
-@@ -0,0 +1,1668 @@
+@@ -0,0 +1,1675 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2019 Amlogic, Inc. All rights reserved.
@@ -1393,7 +1393,16 @@ index 000000000..1e1ac770b
 +
 +/* SDIO */
 +&sd_emmc_a {
-+	status = "okay";
++	/* Onboard SDIO wifi (aic8801/vlsicomm) times out continuously on real
++	 * KM7 hardware regardless of bus clock (200MHz and 50MHz both produce
++	 * unbounded CMD53 timeouts). The amlwifi kernel worker thread then
++	 * blocks in mmc_wait_for_req_done in uninterruptible D-state, which
++	 * hangs both shutdown/reboot and boot-completion (systemd units that
++	 * wait on the wlan0 link never finish). Disable the controller
++	 * entirely until the underlying SDIO fault is root-caused; Ethernet
++	 * remains available.
++	 */
++	status = "disabled";
 +	pinctrl-0 = <&sdio_pins>;
 +	pinctrl-1 = <&sdio_clk_gate_pins>;
 +	pinctrl-names = "default", "clk-gate";
@@ -1402,9 +1411,7 @@ index 000000000..1e1ac770b
 +
 +	bus-width = <4>;
 +	cap-sd-highspeed;
-+	sd-uhs-sdr50;
-+	sd-uhs-sdr104;
-+	max-frequency = <200000000>;
++	max-frequency = <50000000>;
 +
 +	non-removable;
 +	disable-wp;

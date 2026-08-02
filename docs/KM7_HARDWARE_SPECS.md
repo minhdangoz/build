@@ -160,7 +160,7 @@ cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_cur_freq
 | eMMC      | `sd_emmc_c` | 8-bit | `cap-mmc-highspeed`, `mmc-ddr-1_8v`, `mmc-hs200-1_8v` declared, but `max-frequency` capped at **100 MHz** (not 200 MHz) to match the vendor-proven Android DTB value — km7.dts comment notes this may relate to `emmc: resp timeout, cmd8/cmd55` messages seen on every boot. `tx_delay = 0xa` and `ignore_desc_busy` are also carried over from the vendor DTB for the same reason. HS400 is present but commented out. |
 | SD card   | `sd_emmc_b` | 4-bit | Card-detect on `GPIOC_6`, data1/wake on `GPIOC_1`. `max-frequency = 200000000` but UHS modes (SDR50/SDR104) are commented out — effectively high-speed only. |
 | NAND      | `mtd_nand`  | — | `status = "disabled"` — board has no NAND, eMMC-only. |
-| SDIO      | `sd_emmc_a` | 4-bit | Non-removable, on-board WiFi, not general storage. The `brcm,bcm4329-fmac` compatible is Amlogic's generic SDIO-WiFi string — the actual part is an Amlogic W1 (SDIO id `0x8888:0x8888`). See Networking. |
+| SDIO      | `sd_emmc_a` | 4-bit | Non-removable, fixed 3.3 V, capped at **50 MHz high-speed**. The inherited Android node advertised SDR50/SDR104 at 200 MHz while both voltage supplies were commented out; live Linux then ran SDR104 at 3.3 V and produced continuous CMD53 timeouts. The `brcm,bcm4329-fmac` compatible is Amlogic's generic SDIO-WiFi string — the actual part is an Amlogic W1 (SDIO id `0x8888:0x8888`). See Networking. |
 
 eMMC boot requires `amlogic-mmc.ko` (module) present in the initramfs — see
 the bring-up doc for the module-list fix; without it Linux cannot see any
@@ -193,6 +193,14 @@ the bring-up doc for the module-list fix; without it Linux cannot see any
   clock on `GPIOX_16` via `&pwm_ef` channel 0 (`wifi_pwm_conf`). That
   clock is mandatory: without it the part never leaves reset and the SDIO
   bus reports `sdio vendor is 0x0`.
+
+  The SDIO host must remain in 3.3 V high-speed mode at 50 MHz. On the live
+  GNOME image, the inherited `sd-uhs-sdr50`/`sd-uhs-sdr104` flags negotiated
+  SDR104 at 200 MHz even though the board node provides no 1.8 V `vqmmc`
+  supply. The result was a `work_thread amlwifi` task permanently blocked in
+  `mmc_wait_for_req_done` and 9,764 `fe088000.sdio` CMD53 timeouts in roughly
+  50 minutes. The KM7 DT now removes those UHS capabilities and caps the link
+  at 50 MHz; do not restore 200 MHz without a live voltage/tuning proof.
 - **Bluetooth**: `aml_bt` node — reset & BT-enable share `GPIOX_17`,
   wake-up on `GPIOX_18`, host-wake on `GPIOX_19`. The W1 is a WiFi+BT
   combo. The family Broadcom `hciattach` path is intentionally disabled for

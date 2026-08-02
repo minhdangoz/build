@@ -1,6 +1,10 @@
 [Unit]
 Description=TX68 AIC8801 Bluetooth (UART HCI on ttyS1)
-After=bluetooth.service
+# aic8800_btlpm_sdio has no modalias, so it never autoloads on its own -- it
+# is force-loaded via /etc/modules-load.d/aic8800-btlpm.conf. Wait for that
+# to finish before attaching hci0, otherwise BT_WAKE has not been toggled yet
+# and hciattach fails with "command 0x1003 tx timeout".
+After=systemd-modules-load.service bluetooth.service
 Wants=bluetooth.service
 
 [Service]
@@ -9,7 +13,15 @@ ExecStartPre=/usr/sbin/rfkill unblock all
 # Older AIC btlpm modules expose btwrite.  The current Radxa DKMS module does
 # not bind the TX68 bt-lpm DT node, so assert PG17 (global GPIO 209) directly.
 ExecStartPre=/bin/sh -ec 'if [ -e /proc/bluetooth/sleep/btwrite ]; then echo 1 > /proc/bluetooth/sleep/btwrite; else [ -d /sys/class/gpio/gpio209 ] || echo 209 > /sys/class/gpio/export; echo out > /sys/class/gpio/gpio209/direction; echo 1 > /sys/class/gpio/gpio209/value; fi'
-ExecStart=/usr/bin/hciattach -n -s 1500000 /dev/ttyS1 any 1500000 flow nosleep
+# hciattach does not fail/exit when the chip's first HCI reset attempt times
+# out (confirmed on real hardware: hci0 stays DOWN forever, hciattach stays
+# running, so Restart=on-failure never triggers). The chip is not reliably
+# ready for UART HCI until some point after this service would normally
+# start -- observed elapsed-since-boot needed varies run to run (still
+# failing at 19s with a fixed pre-start delay, reliably working once the
+# system had been up ~90s+). Retry hciattach until hci0 actually comes up
+# instead of guessing a fixed delay.
+ExecStart=/bin/sh -c 'for i in $(seq 1 30); do /usr/bin/hciattach -n -s 1500000 /dev/ttyS1 any 1500000 flow nosleep & pid=$!; up=0; for j in $(seq 1 10); do sleep 1; hciconfig hci0 2>/dev/null | grep -q "UP RUNNING" && { up=1; break; }; done; if [ "$up" = 1 ]; then wait "$pid"; exit 0; fi; kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; done; exit 1'
 Restart=on-failure
 RestartSec=2
 

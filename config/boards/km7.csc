@@ -220,6 +220,49 @@ function post_family_tweaks__km7_remote_desktop() {
 	chroot_sdcard systemctl --no-reload enable x11vnc.service ssh.service
 }
 
+# Noble's mid-tier GNOME selection installs gnome-shell's
+# org.gnome.ScreenSaver activation script but not the /usr/bin/gjs interpreter
+# named by that script.  gsd-usb-protection then crashes while constructing its
+# screen-saver proxy and systemd/apport restart it indefinitely.  Make the
+# runtime dependency part of every KM7 GNOME image; masking USB protection would
+# only hide the packaging bug.
+function post_family_tweaks__km7_gnome_runtime() {
+	if [[ "${DESKTOP_ENVIRONMENT}" == "gnome" ]]; then
+		chroot_sdcard_apt_get_install gjs
+	fi
+}
+
+# Disable GNOME lockscreen by default (TV box with no keyboard can't unlock it).
+# Matches TX68's behavior -- see tx68.conf post_family_tweaks__tx68().
+function post_family_tweaks__km7_disable_lockscreen() {
+	if [[ -d "${SDCARD}/etc/gdm3" || "${DESKTOP_ENVIRONMENT}" == "gnome" ]]; then
+		mkdir -p "${SDCARD}"/etc/dconf/db/local.d
+		cat <<- 'DCONF_NOLOCK' > "${SDCARD}"/etc/dconf/db/local.d/02-km7-no-lock
+			[org/gnome/desktop/session]
+			idle-delay=uint32 0
+
+			[org/gnome/desktop/screensaver]
+			idle-activation-enabled=false
+			lock-enabled=false
+
+			[org/gnome/desktop/lockdown]
+			disable-lock-screen=true
+
+			[org/gnome/settings-daemon/plugins/power]
+			sleep-inactive-ac-timeout=0
+			sleep-inactive-ac-type='nothing'
+			sleep-inactive-battery-timeout=0
+			sleep-inactive-battery-type='nothing'
+			idle-dim=false
+
+			[org/gnome/desktop/interface]
+			color-scheme='prefer-dark'
+			gtk-theme='Adwaita-dark'
+		DCONF_NOLOCK
+		chroot_sdcard "dconf update"
+	fi
+}
+
 # KM7's Mali-G31 is the same weak GPU as TX68's, and panels attached to this
 # box commonly report 4K as their native/preferred EDID mode, which is too
 # slow to compose smoothly here -- and confirmed live on TX68, letting Xorg's
