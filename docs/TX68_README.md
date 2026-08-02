@@ -225,6 +225,24 @@ Lệnh trên đã được chạy thành công trên TX68 thật ngày 2026-08-0
 bị. Đây là bằng chứng cho đường flash/storage; vẫn phải kiểm tra kernel, service
 và phần cứng sau khi OS boot trước khi kết luận toàn bộ image hoạt động.
 
+Post-flash check qua SSH:
+
+```bash
+uname -r
+lsmod | grep fd650
+ls -l /dev/fd650_dev
+systemctl is-enabled tx68-fd650-clock.service
+systemctl is-active tx68-fd650-clock.service
+fd650ctl brightness 1
+fd650ctl temp 50
+```
+
+Image trên cũng đã vượt qua check này trên phần cứng thật: kernel
+`6.18.41-current-sunxi64`, `fd650.ko` loaded, `/dev/fd650_dev` là `root:video`
+và service `enabled` + `active`. User `tx68` thuộc group `video`, nên hai lệnh
+`fd650ctl` chạy không cần sudo; `temp 50` gửi đúng chuỗi `50*C`, trong đó `*`
+được driver ánh xạ thành degree glyph nửa trên (`0x63`).
+
 `sunxi-fel write` không thay thế lệnh này: nó chỉ ghi vào RAM. OpenixCLI thực
 hiện đầy đủ FEL -> FES, khởi tạo DRAM/eMMC, ghi và verify Boot0, TOC1/U-Boot,
 MBR cùng `rootfs.fex`. Trong danh sách partition, chỉ thấy `rootfs` là **đúng**:
