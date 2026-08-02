@@ -166,6 +166,27 @@ function post_family_tweaks__km7_firstboot_identity() {
 		PRESET_DEFAULT_REALNAME="KM7"
 		PRESET_ROOT_PASSWORD="km7"
 	KM7_FIRSTBOOT_IDENTITY
+
+	# Live-confirmed trap (2026-08-02): /usr/lib/armbian/armbian-firstlogin's
+	# gdm3 branch only makes AutomaticLoginEnable permanent if
+	# /root/.desktop_autologin exists *before* the wizard's gdm3 branch runs;
+	# otherwise it starts a background `sleep 20` that flips
+	# AutomaticLoginEnable back to false. On a TV box nobody is at the
+	# console within that 20s window, so every fresh flash silently loses
+	# autologin and x11vnc's `-display :0 -auth
+	# /run/user/1000/gdm/Xauthority` then fails outright (no X session ever
+	# starts -- GDM sits at the greeter as user "gdm", not "km7"). Same
+	# mechanism TX68 uses (see tx68.conf's post_family_tweaks__tx68): write
+	# custom.conf directly and pre-drop the marker so the wizard's own write
+	# is a no-op regardless of console interaction timing.
+	mkdir -p "${SDCARD}"/etc/gdm3
+	cat <<- 'KM7_GDM_AUTOLOGIN' > "${SDCARD}"/etc/gdm3/custom.conf
+		[daemon]
+		WaylandEnable=false
+		AutomaticLoginEnable=true
+		AutomaticLogin=km7
+	KM7_GDM_AUTOLOGIN
+	touch "${SDCARD}"/root/.desktop_autologin
 }
 
 # Front-panel FD650 (Amlogic's LED-class driver in the aggregate

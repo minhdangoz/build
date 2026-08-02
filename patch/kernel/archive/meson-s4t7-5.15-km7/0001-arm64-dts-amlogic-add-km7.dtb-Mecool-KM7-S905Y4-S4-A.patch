@@ -16,8 +16,8 @@ hook to run "fdt resize" before the bl31/bl32 reserved-memory patch-in.
 Change-Id: I45b57150aceb3d685f517231745bf83c80711aea
 ---
  arch/arm64/boot/dts/amlogic/Makefile |    7 +
- arch/arm64/boot/dts/amlogic/km7.dts  | 1668 ++++++++++++++++++++++++++
- 2 files changed, 1675 insertions(+)
+ arch/arm64/boot/dts/amlogic/km7.dts  | 1680 ++++++++++++++++++++++++++
+ 2 files changed, 1687 insertions(+)
  create mode 100644 arch/arm64/boot/dts/amlogic/km7.dts
 
 diff --git a/common_drivers/arch/arm64/boot/dts/amlogic/Makefile b/common_drivers/arch/arm64/boot/dts/amlogic/Makefile
@@ -40,7 +40,7 @@ new file mode 100644
 index 000000000..1e1ac770b
 --- /dev/null
 +++ b/common_drivers/arch/arm64/boot/dts/amlogic/km7.dts
-@@ -0,0 +1,1675 @@
+@@ -0,0 +1,1687 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2019 Amlogic, Inc. All rights reserved.
@@ -1393,16 +1393,23 @@ index 000000000..1e1ac770b
 +
 +/* SDIO */
 +&sd_emmc_a {
-+	/* Onboard SDIO wifi (aic8801/vlsicomm) times out continuously on real
-+	 * KM7 hardware regardless of bus clock (200MHz and 50MHz both produce
-+	 * unbounded CMD53 timeouts). The amlwifi kernel worker thread then
-+	 * blocks in mmc_wait_for_req_done in uninterruptible D-state, which
-+	 * hangs both shutdown/reboot and boot-completion (systemd units that
-+	 * wait on the wlan0 link never finish). Disable the controller
-+	 * entirely until the underlying SDIO fault is root-caused; Ethernet
-+	 * remains available.
++	/* Onboard SDIO WiFi is an Amlogic W1 (aml_sdio/vlsicomm, not aic8801 --
++	 * that's TX68's Bluetooth chip, wrongly copy-pasted here previously).
++	 * A prior attempt disabled this controller entirely after seeing
++	 * unbounded CMD53 timeouts at both 200MHz and 50MHz, on the theory that
++	 * the bus clock was the problem. It wasn't: the vendor Android KM7.dtb
++	 * (device/amlogic/KM7-kernel/5.4/KM7.dtb, s4_s905y4_4g variant,
++	 * decompiled and diffed against this node) runs the *same* controller
++	 * at 200MHz SDR104 with no vmmc-supply/vqmmc-supply at all -- those
++	 * regulator phandles don't even exist in this DTS, hence commented out
++	 * below, matching vendor. What the vendor node has that this one
++	 * didn't: cap-sdio-irq, use_intf3_tuning and card_type = <3>, which
++	 * are consumed by Amlogic's own meson-axg-mmc driver (this is Amlogic's
++	 * common_drivers tree, not plain mainline) for SDIO IRQ mode and bus
++	 * tuning. Restored to match vendor; needs a live boot to confirm the
++	 * CMD53 storm is gone before calling WiFi verified.
 +	 */
-+	status = "disabled";
++	status = "okay";
 +	pinctrl-0 = <&sdio_pins>;
 +	pinctrl-1 = <&sdio_clk_gate_pins>;
 +	pinctrl-names = "default", "clk-gate";
@@ -1411,7 +1418,12 @@ index 000000000..1e1ac770b
 +
 +	bus-width = <4>;
 +	cap-sd-highspeed;
-+	max-frequency = <50000000>;
++	cap-sdio-irq;
++	use_intf3_tuning;
++	card_type = <3>;
++	sd-uhs-sdr50;
++	sd-uhs-sdr104;
++	max-frequency = <200000000>;
 +
 +	non-removable;
 +	disable-wp;
