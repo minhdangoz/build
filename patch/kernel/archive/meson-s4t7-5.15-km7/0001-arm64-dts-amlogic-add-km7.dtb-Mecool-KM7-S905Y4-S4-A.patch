@@ -1402,16 +1402,16 @@ index 000000000..1e1ac770b
 +	 * entirely until the underlying SDIO fault is root-caused; Ethernet
 +	 * remains available.
 +	 *
-+	 * 2026-08-02: re-enabled once at 200MHz SDR104 with vendor's
-+	 * cap-sdio-irq/use_intf3_tuning/card_type=<3> tuning props added (see
-+	 * git history), on the hypothesis that missing tuning -- not clock --
-+	 * was the real cause. Live-tested by a full build+flash+boot: board
-+	 * hung at boot again, same signature as the original issue. Reverted
-+	 * back to disabled. Do not re-enable without a live boot proving the
-+	 * CMD53 storm is actually gone; if retried, the next thing to check is
-+	 * the W1 driver port itself (kernel patch 0007,
-+	 * drivers/net/wireless/amlogic_w1/), not more DT tuning -- the DT
-+	 * already matches vendor as closely as possible.
++	 * 2026-08-02/03: two re-enable attempts (vendor tuning props alone;
++	 * then tuning props + a formal mmc-pwrseq-simple binding on the WiFi
++	 * chip's power-on GPIO, requiring CONFIG_PWRSEQ_SIMPLE=y) were each
++	 * live-tested by a full build+flash+boot. Both still hung at boot,
++	 * same signature as the original issue -- the pinmux fix in patch 0004
++	 * was already in effect throughout both attempts, so that was never
++	 * the missing piece either. Reverted back to disabled again. Debug the
++	 * next attempt live over SSH on an already-booted image (see
++	 * km7/README.md "Fast DTB-only iteration") before spending another
++	 * full build+flash cycle on it.
 +	 */
 +	status = "disabled";
 +	pinctrl-0 = <&sdio_pins>;

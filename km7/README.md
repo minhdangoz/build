@@ -68,6 +68,48 @@ The first safe target is an SD image. Do not overwrite eMMC boot firmware until
 the SD image has passed the acceptance checks below and both UART recovery and
 the physical SARADC recovery key have been tested.
 
+## Fast DTB-only iteration (don't burn a full rebuild on a DT hypothesis)
+
+`km7/build-emmc.sh` / `compile.sh` take on the order of an hour. Never use a
+full build to *test* a DTS change (clock, tuning props, `status = "okay"`
+flips, etc.) — a DT-only theory that's wrong still costs the same hour to
+find out. A live, real device (see `docs/KM7_HARDWARE_SPECS.md` for current
+IP/credentials) already booted from a prior build can load a freshly
+compiled DTB directly, in seconds, without touching the rootfs or U-Boot:
+
+```bash
+K=cache/sources/linux-kernel-worktree/5.15__meson-s4t7__arm64
+cd "$K"
+
+# The dependency-file path after -Wp,-MMD, must point somewhere writable
+# (e.g. /tmp) -- the source tree itself is not writable by the build user.
+gcc -E -Wp,-MMD,/tmp/km7.dtb.d.pre.tmp \
+  -nostdinc -I./common_drivers/include -I./scripts/dtc/include-prefixes \
+  -undef -D__DTS__ -x assembler-with-cpp \
+  -o /tmp/km7.pre common_drivers/arch/arm64/boot/dts/amlogic/km7.dts
+
+./scripts/dtc/dtc -o /tmp/km7.dtb -b 0 \
+  -i common_drivers/arch/arm64/boot/dts/amlogic/ -i./common_drivers/include -i./scripts/dtc/include-prefixes \
+  -@ -p 8192 /tmp/km7.pre
+```
+
+Push it to the running device (confirmed path: `/boot/dtb/amlogic/km7.dtb`,
+also readable from `fdtfile=amlogic/km7.dtb` in `/boot/armbianEnv.txt`) and
+reboot:
+
+```bash
+scp /tmp/km7.dtb km7@<device-ip>:/tmp/km7.dtb
+ssh km7@<device-ip> 'sudo cp /tmp/km7.dtb /boot/dtb/amlogic/km7.dtb && sudo reboot'
+```
+
+Watch UART/`journalctl -k` for the real symptom over the next few minutes.
+**Only fold the DTS change into a full `km7/build-emmc.sh` production build
+after a live boot proves it clean.** This step exists because the SDIO
+WiFi CMD53 fix was twice committed and only found broken after a full
+build+flash cycle — see the `sd_emmc_a` comment in the km7.dts patch and
+[`docs/KM7_HARDWARE_SPECS.md`](../docs/KM7_HARDWARE_SPECS.md) Networking
+section.
+
 ## Boot chain
 
 ```text
