@@ -160,7 +160,7 @@ cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_cur_freq
 | eMMC      | `sd_emmc_c` | 8-bit | `cap-mmc-highspeed`, `mmc-ddr-1_8v`, `mmc-hs200-1_8v` declared, but `max-frequency` capped at **100 MHz** (not 200 MHz) to match the vendor-proven Android DTB value — km7.dts comment notes this may relate to `emmc: resp timeout, cmd8/cmd55` messages seen on every boot. `tx_delay = 0xa` and `ignore_desc_busy` are also carried over from the vendor DTB for the same reason. HS400 is present but commented out. |
 | SD card   | `sd_emmc_b` | 4-bit | Card-detect on `GPIOC_6`, data1/wake on `GPIOC_1`. `max-frequency = 200000000` but UHS modes (SDR50/SDR104) are commented out — effectively high-speed only. |
 | NAND      | `mtd_nand`  | — | `status = "disabled"` — board has no NAND, eMMC-only. |
-| SDIO      | `sd_emmc_a` | 4-bit | Non-removable, 200 MHz SDR104, matching the vendor Android node exactly (2026-08-02: restored after decompiling `device/amlogic/KM7-kernel/5.4/KM7.dtb`). No `vmmc-supply`/`vqmmc-supply` — vendor doesn't declare them either, and the phandles don't exist in this DTS. Needs `cap-sdio-irq`/`use_intf3_tuning`/`card_type = <3>` (Amlogic's own tuning/IRQ-mode hints, consumed by the `common_drivers` meson-axg-mmc driver) to actually behave like vendor — a prior session downclocked to 50MHz and then disabled the controller outright without those properties, which didn't fix the CMD53 timeouts because the clock was never the variable. The `brcm,bcm4329-fmac` compatible is Amlogic's generic SDIO-WiFi string — the actual part is an Amlogic W1 (SDIO id `0x8888:0x8888`). See Networking. |
+| SDIO      | `sd_emmc_a` | 4-bit | `status = "disabled"`. Non-removable, 50 MHz high-speed if ever re-enabled. Onboard SDIO WiFi (Amlogic W1) produces unbounded CMD53 timeouts on real hardware — tried at 200 MHz, at 50 MHz, and (2026-08-02) restored to match the vendor Android node exactly (`cap-sdio-irq`/`use_intf3_tuning`/`card_type = <3>` added, decompiled from `device/amlogic/KM7-kernel/5.4/KM7.dtb`) — all three live-tested on real hardware, all three still hang boot/shutdown the same way. Disabled until the W1 driver port itself (kernel patch `0007`, `drivers/net/wireless/amlogic_w1/`) is root-caused; do not re-enable via more DT tuning alone. Ethernet remains available. The `brcm,bcm4329-fmac` compatible is Amlogic's generic SDIO-WiFi string — the actual part is an Amlogic W1 (SDIO id `0x8888:0x8888`). See Networking. |
 
 eMMC boot requires `amlogic-mmc.ko` (module) present in the initramfs — see
 the bring-up doc for the module-list fix; without it Linux cannot see any
@@ -201,11 +201,14 @@ the bring-up doc for the module-list fix; without it Linux cannot see any
   vendor Android DT runs the same controller at 200 MHz SDR104 without
   incident, but also carries `cap-sdio-irq`, `use_intf3_tuning`, and
   `card_type = <3>` that this DTS was missing; those Amlogic-specific
-  tuning/IRQ-mode properties (not the clock) are the leading suspect for the
-  CMD53 storm. `sd_emmc_a` was restored to match vendor (200 MHz, SDR50/
-  SDR104, plus the three missing properties) on 2026-08-02 — needs a live
-  boot to confirm the timeouts are actually gone before WiFi is called
-  verified.
+  tuning/IRQ-mode properties were the leading suspect for the CMD53 storm.
+  `sd_emmc_a` was restored to match vendor (200 MHz, SDR50/SDR104, plus the
+  three missing properties) on 2026-08-02 — **live-tested by a full
+  build+flash+boot the same day and it still hung at boot**, same signature
+  as the original issue. Reverted back to `status = "disabled"`. The DT now
+  matches vendor as closely as it can; the remaining suspect is the ported
+  W1 driver itself (kernel patch `0007`), not DT tuning. Do not re-enable
+  `sd_emmc_a` again without a live boot proving the CMD53 storm is gone.
 - **Bluetooth**: `aml_bt` node — reset & BT-enable share `GPIOX_17`,
   wake-up on `GPIOX_18`, host-wake on `GPIOX_19`. The W1 is a WiFi+BT
   combo. The family Broadcom `hciattach` path is intentionally disabled for
