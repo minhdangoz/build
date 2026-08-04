@@ -115,7 +115,7 @@ sánh sau khi lên 1512 MHz.
 | OPP Android 14 / Linux 5.15 | 420 · 456 · 504 · 552 · 600 · **648** MHz; 900 mV, riêng 648 MHz ở 960 mV | 📄 `apollo_p1/linux-5.15/board.dts &gpu` |
 | OPP Panfrost TX68 (removed) | ~~Cùng 6 mức xung Android 14; cố định rail dùng chung ở 960 mV tại mọi OPP~~ — gỡ bỏ, xem bên dưới | 📄 `sun50i-h616-tx68.dts` |
 | Nguồn | `dcdc1` (`vdd-gpu-sys`) | 📄 + ✅ 960 mV lúc chạy |
-| Tăng tốc phần cứng | Panfrost hoạt động, độ ổn định H618 đang kiểm tra | ✅ renderer phần cứng; đã gặp `gpu sched timeout` làm UI render thiếu |
+| Tăng tốc phần cứng | Panfrost hoạt động; lỗi render/treo desktop đã xác định là CMA cạn | ✅ GPU renderer; xác nhận thực tế với CMA 64 MiB và khắc phục bằng 512 MiB |
 
 Android 14 không dùng Panfrost mà dùng `mali_kbase`. Bảng xung của nó từng được
 mang sang làm `operating-points-v2` cho Panfrost trên TX68 (6 mức, cố định
@@ -140,7 +140,32 @@ Sau thay đổi này, `1800000.gpu` không còn `operating-points-v2`; devfreq k
 còn liệt kê nhiều mức xung nữa (không còn cần kiểm tra
 `/sys/class/devfreq/1800000.gpu/available_frequencies`).
 
-### 3.1 Canary ổn định Panfrost
+### 3.1 CMA — nguyên nhân đã xác nhận của lỗi render/treo desktop
+
+**Đã xác nhận trên TX68 thật:** lỗi render GPU và GNOME session treo là do CMA
+default chỉ **64 MiB** bị cạn, không phải do RAM hệ thống hay GDM. Bằng chứng
+trước khi sửa: `CmaTotal: 65536 kB`, `CmaFree: 144 kB`, trong khi RAM thường
+vẫn còn gần 0.9 GiB và không có OOM killer. Khi CMA không còn vùng DMA liên tục,
+Panfrost/DRM không thể cấp phát scanout buffer, dẫn tới các lỗi sau:
+
+```
+gnome-shell: DRM_IOCTL_MODE_CREATE_DUMB failed: Cannot allocate memory
+gnome-shell: MESA: error: Failed to create scanout resource
+Chrome/ANGLE: Could not create a backing OpenGL context
+```
+
+Kết quả là compositor không vẽ được và toàn bộ phiên GNOME/GDM có thể đứng.
+X11VNC/streaming liên tục làm áp lực buffer tăng thêm. Đây là thiếu **CMA**
+(bộ nhớ DMA contiguous cho DRM/GPU), không phải thiếu RAM tổng.
+
+Boot script mainline `tx68/bootscripts/boot-tx68-next.cmd` hiện ép
+`cma=512M` ở cuối kernel command line; Phoenix/vendor environment cũng đặt
+`cma=512M`. Trên máy 4 GiB, 512 MiB là mức đã xác nhận hoạt động ổn định và vẫn
+để khoảng 3.5 GiB cho RAM thường. Sau khi flash image mới, kết quả cần có là
+`CmaTotal: 524288 kB`; kiểm tra `CmaFree` khi desktop + Chrome/VNC đang chạy để
+theo dõi headroom. Không đổi ngược về CMA 64 MiB.
+
+### 3.2 Canary ổn định Panfrost
 
 TX68 đã gặp GPU treo thật (`status=0x8`) và UI render thiếu sau dòng
 `gpu sched timeout`, trong lúc bảng OPP ở trên còn tồn tại. Image cài
@@ -152,7 +177,9 @@ có polling chờ rail ổn định sau khi bật); nếu vẫn còn thì bướ
 định xung/điện áp theo bảng vendor. Giữ nguyên service này sau khi gỡ OPP —
 đây là hai giả thuyết độc lập, cần test riêng để biết cái nào (nếu có) là
 nguyên nhân thật. Kiểm tra lại trên máy thật sau khi build với thay đổi OPP ở
-trên trước khi kết luận cần giữ/gỡ canary.
+trên trước khi kết luận cần giữ/gỡ canary. Canary này vẫn là phép thử riêng cho
+runtime suspend/resume; kết luận CMA ở mục trên chỉ áp dụng cho chuỗi lỗi cấp
+phát DRM/scanout/OpenGL đã có bằng chứng CMA cạn.
 
 ---
 

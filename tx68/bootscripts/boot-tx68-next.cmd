@@ -115,7 +115,7 @@ fi
 # initrd packaging changes in a way worth telling apart at a glance in the
 # "Kernel command line" log line -- cheaper than comparing SHA-256/filenames
 # across a long debugging session with many near-identical image builds.
-setenv tx68_bootscript_ver "17-perf-gov"
+setenv tx68_bootscript_ver "18-cma512"
 
 # Left to itself the driver takes the TV's preferred mode. The attached TV
 # lists 3840x2160 ten times before anything else (see
@@ -147,7 +147,10 @@ setenv tx68_bootscript_ver "17-perf-gov"
 # drivers/video/cmdline.c keeps the last match for a connector.
 setenv videoargs ""
 
-setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} ${videoargs} consoleblank=0 loglevel=${verbosity} ubootpart=${partuuid} tx68_bootscript_ver=${tx68_bootscript_ver} ${extraargs} ${extraboardargs}"
+# GNOME/Panfrost scanout buffers require contiguous DMA memory.  Keep this
+# last so a stale cma= value in an imported U-Boot environment cannot override
+# the 512 MiB pool selected for the 4 GiB TX68.
+setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} ${videoargs} consoleblank=0 loglevel=${verbosity} ubootpart=${partuuid} tx68_bootscript_ver=${tx68_bootscript_ver} ${extraargs} ${extraboardargs} cma=512M"
 if test "${docker_optimizations}" = "on"; then
 	setenv bootargs "${bootargs} cgroup_enable=memory swapaccount=1"
 fi

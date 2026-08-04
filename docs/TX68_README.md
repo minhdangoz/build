@@ -310,6 +310,24 @@ Cách chéo để xác nhận DTB: nhìn dòng `bytes read` đầu tiên sau khi
 | `Booting using the fdt blob at 0x46000000` | U-Boot dùng DTB của ta, không phải DTB nội bộ. |
 | `axp20x-i2c 0-0036: AXP20x variant AXP313a found` | PMIC lên → mới có nguồn cho eMMC. |
 | `mmcblk0: ... p1 p2` | eMMC nhận. |
+| `cma: Reserved 512 MiB at ...` | Đúng CMA cho desktop/Panfrost. Nếu là 64 MiB thì không dùng image/boot script mới. |
+
+### Xác minh CMA sau login
+
+TX68 4 GiB chạy GNOME + Panfrost cần CMA **512 MiB**. CMA 64 MiB đã được xác
+nhận là nguyên nhân của `DRM_IOCTL_MODE_CREATE_DUMB failed`, lỗi tạo OpenGL
+context của Chrome/ANGLE và treo session khi pool cạn. Ngay sau flash, chạy:
+
+```bash
+cat /proc/meminfo | grep -i cma
+dmesg | grep -i cma
+```
+
+Kết quả mong đợi là `CmaTotal: 524288 kB` và log `cma: Reserved 512 MiB`.
+Đừng chỉ nhìn `MemAvailable`: `CmaFree` mới cho biết còn buffer contiguous cho
+DRM/GPU. Khi tái hiện tải thực tế (GNOME + Chrome + VNC/streaming), `CmaFree`
+không được tiến về 0 như cấu hình 64 MiB trước đây. Chi tiết nguyên nhân và
+owner path: `docs/TX68_HARDWARE.md` §3.1.
 
 ### Vào được dấu nhắc U-Boot
 
