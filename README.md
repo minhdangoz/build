@@ -91,7 +91,7 @@ cd build
 ./compile.sh BOARD=tx68 BRANCH=current RELEASE=noble BUILD_DESKTOP=yes DESKTOP_ENVIRONMENT=gnome KERNEL_CONFIGURE=no
 
 # KM7: legacy/vendor Linux 5.15
-./compile.sh BOARD=km7 BRANCH=legacy RELEASE=noble BUILD_DESKTOP=yes DESKTOP_ENVIRONMENT=gnome KERNEL_CONFIGURE=no
+./compile.sh BOARD=km7 BRANCH=legacy RELEASE=noble BUILD_DESKTOP=yes DESKTOP_ENVIRONMENT=xfce KERNEL_CONFIGURE=no
 ```
 
 <a href="#how-to-build-an-image-or-a-kernel"><img src=".github/README.gif" alt="Build demonstration" width="100%"></a>

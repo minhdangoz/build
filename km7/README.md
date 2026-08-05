@@ -57,7 +57,7 @@ cd /media/jimmy/WORK/AOSP/build
   RELEASE=noble \
   BUILD_DESKTOP=yes \
   DESKTOP_TIER=mid \
-  DESKTOP_ENVIRONMENT=gnome \
+  DESKTOP_ENVIRONMENT=xfce \
   KERNEL_CONFIGURE=no
 ```
 

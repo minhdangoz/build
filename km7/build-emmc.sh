@@ -15,7 +15,7 @@ cd "${repo_root}"
 	RELEASE=noble \
 	BUILD_DESKTOP=yes \
 	DESKTOP_TIER=mid \
-	DESKTOP_ENVIRONMENT=gnome \
+	DESKTOP_ENVIRONMENT=xfce \
 	KERNEL_CONFIGURE=no
 
 newest_image() {
@@ -24,8 +24,8 @@ newest_image() {
 		-printf '%T@ %p\n' | sort -n | tail -n 1 | cut -d' ' -f2-
 }
 
-raw_image="$(newest_image 'Armbian-*Km7_noble_legacy_*_gnome_desktop.img')"
-emmc_image="$(newest_image 'Armbian-*Km7_noble_legacy_*_gnome_desktop.emmc.img')"
+raw_image="$(newest_image 'Armbian-*Km7_noble_legacy_*_xfce_desktop.img')"
+emmc_image="$(newest_image 'Armbian-*Km7_noble_legacy_*_xfce_desktop.emmc.img')"
 
 [[ -n "${raw_image}" && -f "${raw_image}" ]] || {
 	echo "ERROR: KM7 raw image was not produced" >&2

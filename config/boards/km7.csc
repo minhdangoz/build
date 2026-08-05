@@ -256,6 +256,12 @@ function post_family_tweaks__km7_gnome_runtime() {
 # Disable GNOME lockscreen by default (TV box with no keyboard can't unlock it).
 # Matches TX68's behavior -- see tx68.conf post_family_tweaks__tx68().
 function post_family_tweaks__km7_disable_lockscreen() {
+	# These two Display-tab controls belong to XFCE Power Manager, not GNOME.
+	# Put the defaults in /etc/skel: KM7's first-login user is created after
+	# image build. A zero DPMS timeout is rendered by XFCE as "Never".
+	mkdir -p "${SDCARD}"/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml
+	run_host_command_logged install -m 644 "${SRC}/config/boards/assets/xfce4-power-manager-tvbox.xml" "${SDCARD}/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-power-manager.xml"
+
 	if [[ -d "${SDCARD}/etc/gdm3" || "${DESKTOP_ENVIRONMENT}" == "gnome" ]]; then
 		mkdir -p "${SDCARD}"/etc/dconf/db/local.d
 		cat <<- 'DCONF_NOLOCK' > "${SDCARD}"/etc/dconf/db/local.d/02-km7-no-lock

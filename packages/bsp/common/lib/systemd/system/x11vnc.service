@@ -1,11 +1,14 @@
 [Unit]
-Description=x11vnc remote desktop server (mirrors the local X11/GNOME session)
-After=gdm.service
-Wants=gdm.service
+Description=x11vnc remote desktop server (mirrors the local X11 session)
+After=display-manager.service
+Wants=display-manager.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/x11vnc -display :0 -auth /run/user/1000/gdm/Xauthority -rfbauth /etc/x11vnc.pass -rfbport 5900 -forever -loop -noxdamage -repeat -shared
+# The display manager owns Xauthority.  Let x11vnc resolve its live path so
+# this works with both GDM/Xorg and LightDM/XFCE instead of hard-coding GDM.
+# FD_XDM also lets root discover GDM's greeter cookie before auto-login ends.
+ExecStart=/usr/bin/x11vnc -env FD_XDM=1 -display :0 -auth guess -rfbauth /etc/x11vnc.pass -rfbport 5900 -forever -loop -noxdamage -repeat -shared
 Restart=on-failure
 RestartSec=3
 

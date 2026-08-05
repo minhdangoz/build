@@ -11,7 +11,7 @@ The script builds the proven KM7 configuration:
 
 - Ubuntu 24.04 Noble
 - Khadas legacy kernel 5.15
-- GNOME desktop, `mid` tier
+- XFCE desktop, `mid` tier
 - KM7 S4/AP222 signed U-Boot
 
 Successful builds produce both files in `output/images/`:
@@ -56,7 +56,7 @@ cd /media/jimmy/WORK/AOSP/TOOLS/khadas-utils
 
 ./aml-flash-tool/tools/adnl/adnl_burn_pkg \
   -s '001671190592071700000000' \
-  -p '/media/jimmy/WORK/AOSP/build/output/images/Armbian-unofficial_26.08.0-trunk_Km7_noble_legacy_5.15.137_gnome_desktop.emmc.img' \
+  -p '/media/jimmy/WORK/AOSP/build/output/images/Armbian-unofficial_26.08.0-trunk_Km7_noble_legacy_5.15.137_xfce_desktop.emmc.img' \
   -e 1 \
   -r 1
 ```
@@ -132,7 +132,7 @@ The equivalent manual command is:
   RELEASE=noble \
   BUILD_DESKTOP=yes \
   DESKTOP_TIER=mid \
-  DESKTOP_ENVIRONMENT=gnome \
+  DESKTOP_ENVIRONMENT=xfce \
   KERNEL_CONFIGURE=no
 ```
 
